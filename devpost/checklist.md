@@ -19,7 +19,7 @@ Build mode: learn mode (TDD: write test first for every slice; full accuracy eva
   Learner check: Stage a clean file and run `python -m latch.cli check`, then stage a file with a fake phone number and run it again to observe the terminal block.
   Commit: `Add core reflex gate with in-process Julia-1 evaluation`
 
-- [ ] **2. Binary Dissection and Localization Window**
+- [x] **2. Binary Dissection and Localization Window**
   Becomes usable: When a commit is blocked, Latch automatically bisects the offending batch down to the specific file and a pinpointed context window ($\le 25$ lines) with line numbers displayed in the alert, rather than rejecting the whole commit vaguely. Also proves conservative fallback on split boundaries.
   Why now: Pinpointed localization is essential for developer usability on multi-file commits and addresses the spec's key uncertainty (handling multi-line PII split across boundaries).
   PRD ref: `prd.md > The Core Journey` (step 4), `prd.md > Features and Behavior > 2. Adaptive Batching & Binary Dissection`

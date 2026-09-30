@@ -11,6 +11,7 @@ import sys
 from typing import Optional
 from latch.config import ConfigError, LatchConfig, get_config
 from latch.diff_parser import DiffParser, DiffParserError
+from latch.dissection import Dissector
 from latch.engine import EvaluationResult, JuliaEngine, JuliaEngineError
 from latch.presenter import Presenter
 
@@ -46,22 +47,24 @@ def run_check(
             eval_result = eng.evaluate(state_text, request_id=batch.batch_id)
 
             if not eval_result.is_clean(cfg.pii_threshold):
-                # PII or credentials detected: format blocked alert
-                # Window snippet: take up to localization_window_lines
-                window_lines = batch.lines[: cfg.localization_window_lines]
-                first_line = window_lines[0]
-                last_line = window_lines[-1]
-                snippet_text = "\n".join(
-                    f"{l.line_number:4d} | {l.content}" for l in window_lines
+                # PII or credentials detected: run binary dissection localization
+                dissector = Dissector(
+                    threshold=cfg.pii_threshold,
+                    window_limit=cfg.localization_window_lines,
+                    max_depth=cfg.max_dissection_depth,
+                )
+                dissect_res = dissector.dissect(
+                    batch,
+                    evaluate_fn=lambda txt: eng.evaluate(txt, request_id=batch.batch_id),
                 )
 
                 alert = pres.format_blocked(
-                    file_path=first_line.file_path,
-                    start_line=first_line.line_number,
-                    end_line=last_line.line_number,
-                    probability=eval_result.probability,
+                    file_path=dissect_res.offending_file,
+                    start_line=dissect_res.start_line,
+                    end_line=dissect_res.end_line,
+                    probability=dissect_res.probability,
                     threshold=cfg.pii_threshold,
-                    snippet=snippet_text,
+                    snippet=dissect_res.snippet,
                 )
                 print(alert, file=sys.stderr)
                 return 1

@@ -202,3 +202,51 @@ class DiffParser:
             )
 
         return batches
+
+
+def bisect_buffer(batch: DiffBatch) -> tuple[DiffBatch, DiffBatch]:
+    """Splits a DiffBatch into two halves by file boundaries or line midpoint.
+
+    If multiple files are present, splits at the file boundary closest to
+    the line count midpoint. Otherwise, splits the lines of the single file in half.
+    """
+    lines = batch.lines
+    if len(lines) <= 1:
+        return batch, batch
+
+    mid = len(lines) // 2
+
+    # Check if multiple files exist
+    files = {line.file_path for line in lines}
+    split_idx = mid
+
+    if len(files) > 1:
+        # Find file boundary closest to midpoint
+        best_boundary = -1
+        best_distance = len(lines)
+        for i in range(1, len(lines)):
+            if lines[i].file_path != lines[i - 1].file_path:
+                distance = abs(i - mid)
+                if distance < best_distance:
+                    best_distance = distance
+                    best_boundary = i
+        if best_boundary != -1 and 0 < best_boundary < len(lines):
+            split_idx = best_boundary
+
+    left_lines = lines[:split_idx]
+    right_lines = lines[split_idx:]
+
+    left_tokens = sum(max(1, len(l.content) // 4) + 2 for l in left_lines)
+    right_tokens = sum(max(1, len(l.content) // 4) + 2 for l in right_lines)
+
+    left_batch = DiffBatch(
+        batch_id=f"{batch.batch_id}-L",
+        lines=left_lines,
+        estimated_tokens=left_tokens,
+    )
+    right_batch = DiffBatch(
+        batch_id=f"{batch.batch_id}-R",
+        lines=right_lines,
+        estimated_tokens=right_tokens,
+    )
+    return left_batch, right_batch
