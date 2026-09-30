@@ -62,3 +62,31 @@ def test_config_max_chunk_exceeds_context_rejected(tmp_path):
     with pytest.raises(ConfigError) as excinfo:
         mgr.load()
     assert "max_chunk_tokens" in str(excinfo.value).lower()
+
+
+def test_config_unknown_key_rejected(tmp_path):
+    config_file = tmp_path / "config.json"
+    data = {
+        "config_version": "1.0",
+        "unrecognized_custom_field": "exploit",
+    }
+    config_file.write_text(json.dumps(data), encoding="utf-8")
+
+    mgr = ConfigManager(str(config_file))
+    with pytest.raises(ConfigError) as excinfo:
+        mgr.load()
+    assert "unknown configuration parameter" in str(excinfo.value).lower()
+
+
+def test_config_invalid_port_rejected(tmp_path):
+    config_file = tmp_path / "config.json"
+    data = {
+        "config_version": "1.0",
+        "daemon_port": 80,  # Invalid: privileged port < 1024
+    }
+    config_file.write_text(json.dumps(data), encoding="utf-8")
+
+    mgr = ConfigManager(str(config_file))
+    with pytest.raises(ConfigError) as excinfo:
+        mgr.load()
+    assert "daemon_port" in str(excinfo.value).lower()

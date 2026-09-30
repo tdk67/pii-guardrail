@@ -14,6 +14,8 @@ import time
 from typing import Any, List, Optional
 from latch.client import Client
 from latch.config import LatchConfig, get_config
+from latch.diff_parser import DiffParser
+from latch.engine import EvaluationResult
 from latch.prompt import StateBuilder
 
 
@@ -168,6 +170,10 @@ class BenchmarkRunner:
         self.config = config or get_config()
         self.client = client or Client(self.config)
         self.state_builder = StateBuilder(config=self.config)
+        self.diff_parser = DiffParser(
+            max_chunk_tokens=self.config.max_chunk_tokens,
+            allowlist_paths=self.config.allowlist_paths,
+        )
 
     def run(self, fixtures_dir: Optional[str] = None) -> BenchmarkResult:
         base_dir = Path(fixtures_dir or self.config.benchmark_fixtures_dir)
@@ -189,12 +195,40 @@ class BenchmarkRunner:
                 except Exception:
                     continue
 
-                # Format as git staged diff
-                diff_lines = [f"+ {line}" for line in content.splitlines()]
-                formatted_diff = f"=== File: {file_path.name} ===\n" + "\n".join(diff_lines)
-                prompt_state = self.state_builder.build(formatted_diff)
+                # Parse via DiffParser to test allowlisting, pragmas, and batch packing
+                diff_lines = [f"+{line}" for line in content.splitlines()]
+                synthetic_diff = (
+                    f"diff --git a/{file_path.name} b/{file_path.name}\n"
+                    f"--- a/{file_path.name}\n"
+                    f"+++ b/{file_path.name}\n"
+                    f"@@ -0,0 +1,{len(diff_lines)} @@\n" + "\n".join(diff_lines)
+                )
+                added_lines = self.diff_parser.parse_diff_text(synthetic_diff)
 
-                eval_result = self.client.evaluate(prompt_state, request_id=f"bench_{file_path.stem}")
+                if not added_lines:
+                    # Clean (all lines ignored by pragma or allowlist)
+                    eval_result = EvaluationResult(probability=0.0, latency_ms=0)
+                else:
+                    batches = self.diff_parser.pack_into_batches(added_lines)
+                    max_prob = 0.0
+                    total_lat = 0
+                    eval_err = None
+                    for b_idx, batch in enumerate(batches):
+                        prompt_state = self.state_builder.build(batch.formatted_text())
+                        res = self.client.evaluate(
+                            prompt_state,
+                            request_id=f"bench_{file_path.stem}_{b_idx}",
+                        )
+                        total_lat += res.latency_ms
+                        if res.probability > max_prob:
+                            max_prob = res.probability
+                        if res.error:
+                            eval_err = res.error
+                    eval_result = EvaluationResult(
+                        probability=max_prob,
+                        latency_ms=total_lat,
+                        error=eval_err,
+                    )
 
                 if cat_name == "adversarial":
                     # If filename contains 'clean' or 'benign', expected is clean (False), otherwise leak (True)
@@ -219,3 +253,4 @@ class BenchmarkRunner:
             samples=samples,
             threshold=self.config.pii_threshold,
         )
+

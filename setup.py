@@ -9,7 +9,8 @@ setup(
     package_dir={"": "src"},
     python_requires=">=3.12",
     install_requires=[
-        "requests>=2.31.0",
+        "huggingface_hub>=0.20.0",
+        "torch>=2.0.0",
     ],
     entry_points={
         "console_scripts": [

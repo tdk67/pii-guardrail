@@ -9,10 +9,9 @@ on engine failure or missing weights.
 from __future__ import annotations
 import json
 import os
-import re
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 from latch.config import LatchConfig
 
 
@@ -65,28 +64,19 @@ class JuliaEngine:
             )
 
         try:
-            # Check for native julia package first
-            try:
-                from julia import load_model  # type: ignore
-                self._model = load_model(
-                    model_dir,
-                    device="cpu",
-                    strict_encoding=True,
-                    max_length=self.config.model_max_context_tokens,
-                )
-            except ImportError:
-                # If julia package not installed as wheel, try loading via PyTorch mmBERT
-                import torch
-                # Load state dict or PyTorch checkpoint if present
-                ckpt_path = os.path.join(model_dir, "pytorch_model.bin")
-                model_safetensors = os.path.join(model_dir, "model.safetensors")
-                if not (os.path.exists(ckpt_path) or os.path.exists(model_safetensors)):
-                    raise ModelWeightsNotFoundError(
-                        f"No weight files (pytorch_model.bin or model.safetensors) found in '{model_dir}'."
-                    )
-                self._model = {"device": "cpu", "path": model_dir}
-
+            from julia import load_model  # type: ignore
+            self._model = load_model(
+                model_dir,
+                device="cpu",
+                strict_encoding=True,
+                max_length=self.config.model_max_context_tokens,
+            )
             self._initialized = True
+        except ImportError as err:
+            raise JuliaEngineError(
+                "The Julia runtime package ('julia') is not installed or importable. "
+                "Ensure Julia-1 is installed via 'pip install -e ./models/julia-1'."
+            ) from err
         except ModelWeightsNotFoundError:
             raise
         except Exception as err:
@@ -108,23 +98,22 @@ class JuliaEngine:
                 request_id=request_id,
             )
 
-        try:
-            if hasattr(self._model, "predict"):
-                criteria = self._load_criteria()
-                res = self._model.predict(
-                    state=state,
-                    questions={
-                        "pii_check": {
-                            "type": "noul",
-                            "instructions": "Does this code diff contain leaked sensitive PII or credentials?",
-                            "criteria": criteria,
-                        }
-                    },
-                )
-                prob = float(res.get("answers", {}).get("pii_check", {}).get("noul", 0.0))
-            else:
-                prob = self._heuristic_mock_score(state)
+        if not hasattr(self._model, "predict"):
+            raise JuliaEngineError("Julia-1 model is not loaded or does not support .predict().")
 
+        try:
+            criteria = self._load_criteria()
+            res = self._model.predict(
+                state=state,
+                questions={
+                    "pii_check": {
+                        "type": "noul",
+                        "instructions": "Does this code diff contain leaked sensitive PII or credentials?",
+                        "criteria": criteria,
+                    }
+                },
+            )
+            prob = float(res.get("answers", {}).get("pii_check", {}).get("noul", 0.0))
             latency = int((time.perf_counter() - start_time) * 1000)
             return EvaluationResult(
                 probability=prob,
@@ -136,29 +125,16 @@ class JuliaEngine:
 
     def _load_criteria(self) -> Dict[str, str]:
         """Loads criteria definitions mapping 'false' and 'true' keys."""
-        return {
-            "false": "Standard programming source code, functions, classes, imports, configuration schemas, or benign public comments.",
-            "true": "Leaked personal data, unmasked full names with phone numbers or home addresses, government SSNs, plaintext passwords, or private API keys.",
-        }
+        path = getattr(self.config, "noul_criteria_path", None)
+        if not path or not os.path.exists(path):
+            raise JuliaEngineError(f"Criteria definitions file not found at: {path}")
 
-    @staticmethod
-    def _heuristic_mock_score(state: str) -> float:
-        """High-precision reference scorer for testing and validation."""
-        text = state.lower()
-        
-        # High-confidence indicators of live secrets and unencrypted PII
-        patterns = [
-            r"sk-live-[a-zA-Z0-9]{12,}",
-            r"ghp_[a-zA-Z0-9]{20,}",
-            r"(?:aws_secret_access_key|password)\s*=\s*['\"][^'\"]{8,}['\"]",
-            r"(?:\+?1[-.\s]?)?\(?[2-9]\d{2}\)?[-.\s]?\d{3}[-.\s]?\d{4}",
-            r"\b\d{3}-\d{2}-\d{4}\b",  # SSN
-            r"(?:customer_name|patient_name)\s*=\s*['\"][A-Z][a-z]+ [A-Z][a-z]+['\"]",
-        ]
-        
-        for pattern in patterns:
-            if re.search(pattern, state):
-                return 0.94
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if "criteria" in data and isinstance(data["criteria"], dict):
+                    return data["criteria"]
+                raise JuliaEngineError("Missing 'criteria' object in criteria file.")
+        except Exception as err:
+            raise JuliaEngineError(f"Failed to load criteria file: {err}") from err
 
-        # Clean/benign indicators
-        return 0.05

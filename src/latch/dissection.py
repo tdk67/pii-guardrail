@@ -8,7 +8,7 @@ Implements conservative fallback: if both split halves score below threshold
 
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Optional
 from latch.diff_parser import DiffBatch, bisect_buffer
 from latch.engine import EvaluationResult
 
@@ -40,14 +40,18 @@ class Dissector:
         self,
         batch: DiffBatch,
         evaluate_fn: Callable[[str], EvaluationResult],
+        initial_probability: Optional[float] = None,
     ) -> DissectionResult:
         """Divide-and-conquer localization to pinpoint leak to <= window_limit lines."""
         current = batch
         depth = 0
 
-        # Initial evaluation of the batch
-        init_eval = evaluate_fn(current.formatted_text())
-        current_prob = init_eval.probability
+        # Use passed parent evaluation if available to eliminate wasted redundant inference
+        if initial_probability is not None:
+            current_prob = initial_probability
+        else:
+            init_eval = evaluate_fn(current.formatted_text())
+            current_prob = init_eval.probability
 
         while (len({l.file_path for l in current.lines}) > 1 or len(current.lines) > self.window_limit) and depth < self.max_depth:
             depth += 1
@@ -79,7 +83,7 @@ class Dissector:
         return self._build_result(current, current_prob)
 
     def _build_result(self, batch: DiffBatch, probability: float) -> DissectionResult:
-        """Constructs DissectionResult and formats line-numbered snippet."""
+        """Constructs DissectionResult and formats line-numbered snippet accurately."""
         lines = batch.lines
         if not lines:
             return DissectionResult(
@@ -90,23 +94,34 @@ class Dissector:
                 probability=probability,
             )
 
+        unique_files = list(dict.fromkeys(l.file_path for l in lines))
         first_line = lines[0]
         last_line = lines[-1]
 
-        # For snippet display, render up to 50 lines
-        display_lines = lines[: max(self.window_limit, 50)]
-        snippet_lines = [
-            f"{l.line_number:4d} | {l.content}" for l in display_lines
-        ]
+        # Strictly respect self.window_limit (<= 25 lines)
+        display_lines = lines[: self.window_limit]
+        snippet_lines = []
+        last_file = None
+        for l in display_lines:
+            if len(unique_files) > 1 and l.file_path != last_file:
+                snippet_lines.append(f"--- File: {l.file_path} ---")
+                last_file = l.file_path
+            snippet_lines.append(f"{l.line_number:4d} | {l.content}")
+
         if len(lines) > len(display_lines):
             snippet_lines.append(f"     ... ({len(lines) - len(display_lines)} more lines in parent window)")
 
         snippet = "\n".join(snippet_lines)
 
+        offending_file = first_line.file_path if len(unique_files) == 1 else ", ".join(unique_files)
+        start_line = first_line.line_number
+        end_line = last_line.line_number
+
         return DissectionResult(
-            offending_file=first_line.file_path,
-            start_line=first_line.line_number,
-            end_line=last_line.line_number,
+            offending_file=offending_file,
+            start_line=start_line,
+            end_line=end_line,
             snippet=snippet,
             probability=probability,
         )
+

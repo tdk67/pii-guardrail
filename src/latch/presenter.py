@@ -6,8 +6,9 @@ Isolates all UI/terminal formatting from core business and engine logic.
 """
 
 from __future__ import annotations
+import os
 import sys
-from typing import Optional
+from typing import List, Optional
 
 
 class Presenter:
@@ -42,7 +43,25 @@ class Presenter:
             return text
         return f"{code}{text}{self.RESET}"
 
-    def format_clean(self, latency_ms: int) -> str:
+    def _build_frame(self, title: str) -> List[str]:
+        """Constructs an ANSI-framed 3-line alert box (top, mid, bottom)."""
+        banner_title = f" {title} "
+        border_char = "─" if self.supports_unicode else "="
+        banner_border = border_char * len(banner_title)
+
+        c_tl = "┌" if self.supports_unicode else "+"
+        c_tr = "┐" if self.supports_unicode else "+"
+        c_bl = "└" if self.supports_unicode else "+"
+        c_br = "┘" if self.supports_unicode else "+"
+        c_bar = "│" if self.supports_unicode else "|"
+
+        top = self._c(self.RED + self.BOLD, f"{c_tl}{banner_border}{c_tr}")
+        mid = self._c(self.RED + self.BOLD, f"{c_bar}{banner_title}{c_bar}")
+        bot = self._c(self.RED + self.BOLD, f"{c_bl}{banner_border}{c_br}")
+
+        return [top, mid, bot]
+
+    def format_clean(self, latency_ms: int, mode: str = "daemon") -> str:
         """Quiet monospace success output for approved commits."""
         symbol = "✓" if self.supports_unicode else "[OK]"
         prefix = self._c(self.GREEN + self.BOLD, f"{symbol} Latch:")
@@ -59,30 +78,11 @@ class Presenter:
         snippet: str,
     ) -> str:
         """High-contrast framed alert banner when sensitive PII is detected."""
-        banner_title = " [LATCH BLOCKED] Sensitive PII or Credentials Detected "
-        border_char = "─" if self.supports_unicode else "="
-        banner_border = border_char * len(banner_title)
-        
-        c_tl = "┌" if self.supports_unicode else "+"
-        c_tr = "┐" if self.supports_unicode else "+"
-        c_bl = "└" if self.supports_unicode else "+"
-        c_br = "┘" if self.supports_unicode else "+"
-        c_bar = "│" if self.supports_unicode else "|"
-
-        top = f"{c_tl}{banner_border}{c_tr}"
-        mid = f"{c_bar}{banner_title}{c_bar}"
-        bot = f"{c_bl}{banner_border}{c_br}"
-
-        colored_top = self._c(self.RED + self.BOLD, top)
-        colored_mid = self._c(self.RED + self.BOLD, mid)
-        colored_bot = self._c(self.RED + self.BOLD, bot)
-
+        frame = self._build_frame("[LATCH BLOCKED] Sensitive PII or Credentials Detected")
         line_count = max(1, end_line - start_line + 1)
-        
+
         details = [
-            f"{colored_top}",
-            f"{colored_mid}",
-            f"{colored_bot}",
+            *frame,
             f"{self._c(self.BOLD, 'File:')}   {self._c(self.CYAN, file_path)}",
             f"{self._c(self.BOLD, 'Lines:')}  {start_line}-{end_line} (Pinpointed window: {line_count} lines)",
             f"{self._c(self.BOLD, 'Reason:')} PII confidence {probability:.2f} >= threshold {threshold:.2f}",
@@ -99,28 +99,10 @@ class Presenter:
 
     def format_error(self, title: str, error_detail: str, action: str) -> str:
         """Strict fail-closed system error alert banner."""
-        banner_title = " [LATCH SYSTEM ERROR] Evaluation Aborted (Fail-Closed) "
-        border_char = "─" if self.supports_unicode else "="
-        banner_border = border_char * len(banner_title)
-
-        c_tl = "┌" if self.supports_unicode else "+"
-        c_tr = "┐" if self.supports_unicode else "+"
-        c_bl = "└" if self.supports_unicode else "+"
-        c_br = "┘" if self.supports_unicode else "+"
-        c_bar = "│" if self.supports_unicode else "|"
-
-        top = f"{c_tl}{banner_border}{c_tr}"
-        mid = f"{c_bar}{banner_title}{c_bar}"
-        bot = f"{c_bl}{banner_border}{c_br}"
-
-        colored_top = self._c(self.RED + self.BOLD, top)
-        colored_mid = self._c(self.RED + self.BOLD, mid)
-        colored_bot = self._c(self.RED + self.BOLD, bot)
+        frame = self._build_frame("[LATCH SYSTEM ERROR] Evaluation Aborted (Fail-Closed)")
 
         details = [
-            f"{colored_top}",
-            f"{colored_mid}",
-            f"{colored_bot}",
+            *frame,
             f"{self._c(self.BOLD, 'Error:')}  {title}: {error_detail}",
             f"{self._c(self.BOLD, 'Action:')} {action}",
             "",
@@ -131,5 +113,3 @@ class Presenter:
         ]
         return "\n".join(details)
 
-
-import os  # Ensure os imported for environment check

@@ -94,3 +94,43 @@ def test_dissection_conservative_fallback_on_split_boundary():
     assert result.start_line == 1
     assert result.end_line == 40
     assert result.probability == 0.88
+
+
+def test_dissection_bypasses_initial_eval_when_probability_provided():
+    lines = create_mock_lines("src/single.py", 10)
+    batch = DiffBatch(batch_id="test", lines=lines, estimated_tokens=50)
+
+    call_count = 0
+
+    def mock_eval_fn(text: str) -> EvaluationResult:
+        nonlocal call_count
+        call_count += 1
+        return EvaluationResult(probability=0.85, latency_ms=5)
+
+    dissector = Dissector(threshold=0.35, window_limit=25)
+    result = dissector.dissect(batch, evaluate_fn=mock_eval_fn, initial_probability=0.85)
+
+    # Since lines count (10) <= window_limit (25), it should not bisect,
+    # and since initial_probability was provided, mock_eval_fn should NEVER be called!
+    assert call_count == 0
+    assert result.probability == 0.85
+
+
+def test_dissection_multi_file_fallback_labeling():
+    # If dissection halts on a multi-file window, all offending files must be listed
+    lines_a = create_mock_lines("src/file_a.py", 10)
+    lines_b = create_mock_lines("src/file_b.py", 10)
+    batch = DiffBatch(batch_id="test", lines=lines_a + lines_b, estimated_tokens=100)
+
+    # Force immediate conservative fallback (children score below threshold)
+    def mock_eval(text: str) -> EvaluationResult:
+        return EvaluationResult(probability=0.10, latency_ms=5)
+
+    dissector = Dissector(threshold=0.35, window_limit=5, max_depth=1)
+    result = dissector.dissect(batch, evaluate_fn=mock_eval, initial_probability=0.90)
+
+    # Both files must be accurately represented in offending_file
+    assert "src/file_a.py" in result.offending_file
+    assert "src/file_b.py" in result.offending_file
+    assert "--- File:" in result.snippet
+

@@ -80,3 +80,51 @@ def test_pack_batches():
     formatted = batches[0].formatted_text()
     assert "=== File: src/user.py ===" in formatted
     assert 'phone = "+1-555-0199"' in formatted
+
+
+def test_diff_parser_respects_allowlist():
+    parser = DiffParser(allowlist_paths=["docs/*", "impressum.tsx"])
+    added_lines = parser.parse_diff_text(SAMPLE_DIFF)
+    
+    # docs/notes.txt is allowlisted, so only src/user.py lines remain
+    files = {l.file_path for l in added_lines}
+    assert "docs/notes.txt" not in files
+    assert "src/user.py" in files
+    assert len(added_lines) == 2
+
+
+def test_diff_parser_respects_latch_ignore_pragma():
+    diff_with_pragma = """diff --git a/src/impressum.tsx b/src/impressum.tsx
+index 123..456 100644
+--- a/src/impressum.tsx
++++ b/src/impressum.tsx
+@@ -1,3 +1,5 @@
++export const SupportEmail = "contact@example.com"; // latch:ignore
++export const SecretKey = "sk_live_99999";
+"""
+    parser = DiffParser()
+    added_lines = parser.parse_diff_text(diff_with_pragma)
+    
+    # The line with latch:ignore must be excluded
+    contents = [l.content for l in added_lines]
+    assert not any("contact@example.com" in c for c in contents)
+    assert any("sk_live_99999" in c for c in contents)
+
+
+def test_diff_parser_splits_oversized_single_line():
+    huge_line = "a" * 8000
+    oversized_diff = f"""diff --git a/bundle.min.js b/bundle.min.js
+index 123..456 100644
+--- a/bundle.min.js
++++ b/bundle.min.js
+@@ -1,1 +1,1 @@
++{huge_line}
+"""
+    parser = DiffParser(max_chunk_tokens=500)
+    added_lines = parser.parse_diff_text(oversized_diff)
+    
+    # Oversized 8,000 char line must be split into chunks
+    assert len(added_lines) > 1
+    for line in added_lines:
+        assert len(line.content) <= (500 - 10) * 4
+

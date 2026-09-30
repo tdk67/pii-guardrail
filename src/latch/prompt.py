@@ -8,7 +8,7 @@ delimiters are sanitized.
 from __future__ import annotations
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from latch.config import LatchConfig, get_config
 
 DEFAULT_PROMPT_TEMPLATE = (
@@ -39,11 +39,15 @@ class StateBuilder:
 
     def __init__(
         self,
+        config: Optional[Any] = None,
         template_path: Optional[str] = None,
-        config: Optional[LatchConfig] = None,
     ) -> None:
-        self.config = config or get_config()
-        self.template_path = template_path or getattr(self.config, "noul_prompt_template_path", "templates/noul_prompt.txt")
+        if isinstance(config, str) and template_path is None:
+            self.template_path = config
+            self.config = get_config()
+        else:
+            self.config = config or get_config()
+            self.template_path = template_path or getattr(self.config, "noul_prompt_template_path", "templates/noul_prompt.txt")
         self._template: Optional[str] = None
 
     def _load_template(self) -> str:

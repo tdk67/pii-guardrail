@@ -8,6 +8,7 @@ Bound strictly to 127.0.0.1 for zero-trust local execution.
 from __future__ import annotations
 import json
 import os
+import secrets
 import signal
 import subprocess
 import sys
@@ -15,26 +16,58 @@ import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any, Optional
 from latch.config import LatchConfig, get_config
-from latch.engine import EvaluationResult, JuliaEngine, JuliaEngineError
+from latch.engine import EvaluationResult, JuliaEngine
+
+
+def resolve_token_file(pid_file: Optional[str] = None) -> str:
+    """Resolve daemon authentication token filepath."""
+    if pid_file:
+        return os.path.join(os.path.dirname(os.path.abspath(pid_file)), "daemon.token")
+    return os.path.join(".latch", "daemon.token")
 
 
 class DaemonRequestHandler(BaseHTTPRequestHandler):
-    """HTTP request handler for daemon IPC endpoints."""
+    """HTTP request handler for daemon IPC endpoints with Host and Token verification."""
 
     def log_message(self, format: str, *args: Any) -> None:
         """Suppress standard HTTP server access logging to keep console clean."""
         pass
 
+    def _validate_host(self) -> bool:
+        """Reject non-loopback Host headers to protect against DNS rebinding and CSRF (S2)."""
+        host = self.headers.get("Host", "").split(":")[0].strip().lower()
+        return host in ("127.0.0.1", "localhost", "")
+
+    def _validate_token(self) -> bool:
+        """Validate ephemeral authentication token (S1)."""
+        expected = getattr(self.server, "token", None)
+        if not expected:
+            return True
+        auth = self.headers.get("X-Latch-Token", "").strip()
+        return secrets.compare_digest(auth, expected)
+
     def do_GET(self) -> None:
         """Handle GET requests (e.g. /v1/health)."""
+        if not self._validate_host():
+            self.send_response(403)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"error": "Forbidden: invalid Host header"}')
+            return
+
         if self.path == "/v1/health":
             try:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                response = {"status": "ready", "model": "Julia-1"}
+                response = {
+                    "status": "ready",
+                    "model": "Julia-1",
+                    "authenticated": self._validate_token(),
+                }
                 self.wfile.write(json.dumps(response).encode("utf-8"))
             except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, OSError):
                 pass
@@ -47,6 +80,20 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         """Handle POST requests (/v1/evaluate, /v1/shutdown)."""
+        if not self._validate_host():
+            self.send_response(403)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"error": "Forbidden: invalid Host header"}')
+            return
+
+        if not self._validate_token():
+            self.send_response(403)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"error": "Unauthorized: invalid or missing X-Latch-Token"}')
+            return
+
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length)
 
@@ -96,18 +143,44 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
 
 
 class DaemonServer(ThreadingHTTPServer):
-    """Threading HTTP server instance hosting the warm Julia-1 engine."""
+    """Threading HTTP server instance hosting the warm Julia-1 engine with authentication."""
 
     def __init__(
         self,
         config: LatchConfig,
         engine: Optional[Any] = None,
         bind_host: str = "127.0.0.1",
+        token: Optional[str] = None,
+        token_file: Optional[str] = None,
     ) -> None:
         self.config = config
         self.engine = engine or JuliaEngine(config)
+        self.token = token or secrets.token_hex(32)
+        self.token_file = token_file or resolve_token_file()
+        self._save_token()
         server_address = (bind_host, config.daemon_port)
         super().__init__(server_address, DaemonRequestHandler)
+
+    def _save_token(self) -> None:
+        """Write secret token to token_file with restricted permissions."""
+        token_dir = os.path.dirname(os.path.abspath(self.token_file))
+        os.makedirs(token_dir, exist_ok=True)
+        try:
+            fd = os.open(self.token_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with open(fd, "w", encoding="utf-8") as f:
+                f.write(self.token)
+        except Exception:
+            with open(self.token_file, "w", encoding="utf-8") as f:
+                f.write(self.token)
+
+    def server_close(self) -> None:
+        """Remove daemon token file on shutdown."""
+        try:
+            if os.path.exists(self.token_file):
+                os.remove(self.token_file)
+        except OSError:
+            pass
+        super().server_close()
 
 
 class DaemonManager:
@@ -120,6 +193,7 @@ class DaemonManager:
     ) -> None:
         self.config = config or get_config()
         self.pid_file = pid_file or os.path.join(".latch", "daemon.pid")
+        self.token_file = resolve_token_file(self.pid_file)
 
     def save_pid(self, pid: int) -> None:
         os.makedirs(os.path.dirname(os.path.abspath(self.pid_file)), exist_ok=True)
@@ -141,13 +215,29 @@ class DaemonManager:
                 os.remove(self.pid_file)
             except OSError:
                 pass
+        if os.path.exists(self.token_file):
+            try:
+                os.remove(self.token_file)
+            except OSError:
+                pass
+
+    def get_token(self) -> Optional[str]:
+        if not os.path.exists(self.token_file):
+            return None
+        try:
+            with open(self.token_file, "r", encoding="utf-8") as f:
+                token = f.read().strip()
+                return token if token else None
+        except OSError:
+            return None
 
     def is_running(self) -> bool:
         """Probe the daemon health endpoint to verify it is responsive."""
+        timeout_sec = self.config.daemon_probe_timeout_ms / 1000.0
         url = f"http://127.0.0.1:{self.config.daemon_port}/v1/health"
         req = urllib.request.Request(url, method="GET")
         try:
-            with urllib.request.urlopen(req, timeout=0.08) as resp:
+            with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
                 if resp.status == 200:
                     data = json.loads(resp.read().decode("utf-8"))
                     return data.get("status") == "ready"
@@ -168,7 +258,7 @@ class DaemonManager:
         python_exe = venv_py if os.path.exists(venv_py) else sys.executable
 
         # Spawn detached background process
-        cmd = [python_exe, "-m", "latch.daemon", "--run-server"]
+        cmd = [python_exe, "-m", "latch.daemon"]
         
         # Cross-platform detached process flags
         creationflags = 0
@@ -198,7 +288,12 @@ class DaemonManager:
     def stop(self) -> bool:
         """Stop the running daemon cleanly."""
         url = f"http://127.0.0.1:{self.config.daemon_port}/v1/shutdown"
-        req = urllib.request.Request(url, data=b"{}", method="POST")
+        headers = {}
+        token = self.get_token()
+        if token:
+            headers["X-Latch-Token"] = token
+
+        req = urllib.request.Request(url, data=b"{}", headers=headers, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=1.0) as resp:
                 pass
@@ -255,3 +350,4 @@ def run_daemon_process() -> None:
 
 if __name__ == "__main__":
     run_daemon_process()
+

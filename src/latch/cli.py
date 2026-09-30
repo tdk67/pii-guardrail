@@ -8,13 +8,14 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from typing import List, Optional
 from latch.client import Client
 from latch.config import ConfigError, LatchConfig, get_config
 from latch.daemon import DaemonManager
 from latch.diff_parser import DiffParser, DiffParserError
 from latch.dissection import Dissector
-from latch.engine import EvaluationResult, JuliaEngine, JuliaEngineError
-from latch.hook import HookInstallError, install_pre_commit_hook
+from latch.engine import JuliaEngine, JuliaEngineError
+from latch.hook import HookInstallError, install_pre_commit_hook, uninstall_pre_commit_hook
 from latch.presenter import Presenter
 
 
@@ -27,7 +28,10 @@ def run_check(
     """Core pre-commit check command. Returns exit code (0 = clean, 1 = blocked/error)."""
     cfg = config or get_config()
     pres = presenter or Presenter()
-    pars = parser or DiffParser(max_chunk_tokens=cfg.max_chunk_tokens)
+    pars = parser or DiffParser(
+        max_chunk_tokens=cfg.max_chunk_tokens,
+        allowlist_paths=cfg.allowlist_paths,
+    )
 
     try:
         # Pre-flight check & staged diff extraction
@@ -43,11 +47,22 @@ def run_check(
 
         # Two-tier runner: routes to warm daemon (sub-50ms) or falls back in-process
         client = Client(cfg, in_process_engine=engine)
+        total_latency_ms = 0
 
         # Evaluate each batch
         for batch in batches:
             state_text = batch.formatted_text()
             eval_result = client.evaluate(state_text, request_id=batch.batch_id)
+            total_latency_ms += eval_result.latency_ms
+
+            if eval_result.error is not None:
+                error_msg = pres.format_error(
+                    title="Evaluation Engine Error",
+                    error_detail=eval_result.error,
+                    action="Check model weights or run 'python -m latch.cli check' after restarting daemon.",
+                )
+                print(error_msg, file=sys.stderr)
+                return 1
 
             if not eval_result.is_clean(cfg.pii_threshold):
                 # PII or credentials detected: run binary dissection localization
@@ -59,6 +74,7 @@ def run_check(
                 dissect_res = dissector.dissect(
                     batch,
                     evaluate_fn=lambda txt: client.evaluate(txt, request_id=batch.batch_id),
+                    initial_probability=eval_result.probability,
                 )
 
                 alert = pres.format_blocked(
@@ -73,7 +89,7 @@ def run_check(
                 return 1
 
         # All batches approved
-        clean_msg = pres.format_clean(latency_ms=eval_result.latency_ms if 'eval_result' in locals() else 0)
+        clean_msg = pres.format_clean(latency_ms=total_latency_ms, mode=client.last_mode)
         print(clean_msg)
         return 0
 
@@ -121,7 +137,6 @@ def download_model(config: Optional[LatchConfig] = None) -> int:
         snapshot_download(
             repo_id=cfg.model,
             local_dir=cfg.model_path,
-            local_dir_use_symlinks=False,
             ignore_patterns=["*.msgpack", "*.h5"],
         )
         print(f"[OK] Model successfully downloaded to '{cfg.model_path}'.")
@@ -158,6 +173,17 @@ def run_install(repo_root: Optional[str] = None, presenter: Optional[Presenter] 
         return 1
 
 
+def run_uninstall(repo_root: Optional[str] = None) -> int:
+    """Uninstall Latch git pre-commit hook and restore any previous backup."""
+    success = uninstall_pre_commit_hook(repo_root=repo_root)
+    if success:
+        print("[OK] Latch pre-commit hook successfully uninstalled.")
+        return 0
+    else:
+        print("[INFO] No active Latch pre-commit hook found to uninstall.")
+        return 0
+
+
 def run_benchmark(config: Optional[LatchConfig] = None) -> int:
     """Run benchmark evaluation suite across test fixtures."""
     cfg = config or get_config()
@@ -186,6 +212,9 @@ def main(args: Optional[list[str]] = None) -> None:
     # Command: install
     subparsers.add_parser("install", help="Install Latch as a git pre-commit hook")
 
+    # Command: uninstall
+    subparsers.add_parser("uninstall", help="Uninstall Latch git pre-commit hook and restore backup")
+
     # Command: daemon
     daemon_parser = subparsers.add_parser("daemon", help="Manage background warm Julia-1 daemon")
     daemon_parser.add_argument("action", choices=["start", "stop", "status"], help="Daemon action")
@@ -203,6 +232,9 @@ def main(args: Optional[list[str]] = None) -> None:
         sys.exit(exit_code)
     elif parsed.command == "install":
         exit_code = run_install()
+        sys.exit(exit_code)
+    elif parsed.command == "uninstall":
+        exit_code = run_uninstall()
         sys.exit(exit_code)
     elif parsed.command == "daemon":
         mgr = DaemonManager()

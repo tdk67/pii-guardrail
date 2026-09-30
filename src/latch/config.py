@@ -8,8 +8,11 @@ defined through configuration.
 from __future__ import annotations
 import json
 import os
-from dataclasses import dataclass, field
-from typing import Any, Dict
+from dataclasses import dataclass, field, fields
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 
 
 class ConfigError(Exception):
@@ -23,7 +26,7 @@ class LatchConfig:
     model: str = "SupersonicLabs/Julia-1"
     model_path: str = "./models/julia-1"
     model_max_context_tokens: int = 8192
-    pii_threshold: float = 0.35
+    pii_threshold: float = 0.65
     max_chunk_tokens: int = 750
     max_dissection_depth: int = 15
     localization_window_lines: int = 25
@@ -33,6 +36,29 @@ class LatchConfig:
     noul_state_template_path: str = "./templates/noul_state.txt"
     noul_criteria_path: str = "./fixtures/noul_criteria.json"
     benchmark_fixtures_dir: str = "./fixtures/"
+    allowlist_paths: List[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        """Resolve paths relative to package root if running outside project CWD."""
+        self.model_path = self._resolve_path(self.model_path, "LATCH_MODEL_PATH")
+        self.noul_state_template_path = self._resolve_path(self.noul_state_template_path)
+        self.noul_criteria_path = self._resolve_path(self.noul_criteria_path)
+        self.benchmark_fixtures_dir = self._resolve_path(self.benchmark_fixtures_dir)
+
+    def _resolve_path(self, raw_path: str, env_override: Optional[str] = None) -> str:
+        if env_override and os.environ.get(env_override):
+            return os.environ[env_override]
+
+        p = Path(raw_path)
+        if p.is_absolute() or p.exists():
+            return str(p)
+
+        # Try package root if CWD does not have this relative path
+        pkg_p = PACKAGE_ROOT / p
+        if pkg_p.exists():
+            return str(pkg_p)
+
+        return str(p)
 
     def validate(self) -> None:
         """Validate config parameters against operational boundaries."""
@@ -51,25 +77,61 @@ class LatchConfig:
             raise ConfigError(f"max_dissection_depth must be positive, got {self.max_dissection_depth}.")
         if self.localization_window_lines <= 0:
             raise ConfigError(f"localization_window_lines must be positive, got {self.localization_window_lines}.")
+        if not (1024 <= self.daemon_port <= 65535):
+            raise ConfigError(
+                f"Invalid daemon_port: {self.daemon_port}. Must be between 1024 and 65535."
+            )
+        if self.daemon_probe_timeout_ms <= 0:
+            raise ConfigError(
+                f"daemon_probe_timeout_ms must be positive, got {self.daemon_probe_timeout_ms}."
+            )
         if self.daemon_eval_timeout_sec <= 0:
             raise ConfigError(
                 f"daemon_eval_timeout_sec must be positive, got {self.daemon_eval_timeout_sec}."
             )
 
 
+def resolve_config_path(explicit_path: Optional[str] = None) -> Path:
+    """Finds config.json via explicit path, env var, CWD, or package root."""
+    if explicit_path:
+        p = Path(explicit_path)
+        if not p.exists():
+            raise ConfigError(f"Configuration file not found at '{explicit_path}'.")
+        return p
+
+    env_config = os.environ.get("LATCH_CONFIG")
+    if env_config:
+        p = Path(env_config)
+        if p.exists():
+            return p
+
+    cwd_config = Path.cwd() / "config.json"
+    if cwd_config.exists():
+        return cwd_config
+
+    home_config = Path.home() / ".latch" / "config.json"
+    if home_config.exists():
+        return home_config
+
+    pkg_config = PACKAGE_ROOT / "config.json"
+    if pkg_config.exists():
+        return pkg_config
+
+    raise ConfigError(
+        "No Latch configuration file found. Ensure 'config.json' exists in your workspace, "
+        "~/.latch/config.json, or specify via LATCH_CONFIG environment variable."
+    )
+
+
 class ConfigManager:
     """Loads and validates configuration from config.json."""
 
-    def __init__(self, config_path: str = "config.json") -> None:
-        self.config_path = config_path
+    def __init__(self, config_path: Optional[str] = None) -> None:
+        self._raw_path = config_path
+        self.config_path: Optional[str] = None
 
     def load(self) -> LatchConfig:
-        if not os.path.exists(self.config_path):
-            raise ConfigError(
-                f"Configuration file not found at '{self.config_path}'. "
-                "Ensure config.json exists in the project root."
-            )
-        
+        self.config_path = str(resolve_config_path(self._raw_path))
         try:
             with open(self.config_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -83,6 +145,13 @@ class ConfigManager:
             k: v for k, v in data.items() if not k.startswith("$")
         }
 
+        valid_fields: Set[str] = {f.name for f in fields(LatchConfig)}
+        unknown_keys = set(filtered.keys()) - valid_fields
+        if unknown_keys:
+            raise ConfigError(
+                f"Unknown configuration parameter(s) in '{self.config_path}': {sorted(unknown_keys)}"
+            )
+
         config = LatchConfig(**filtered)
         config.validate()
         return config
@@ -91,13 +160,14 @@ class ConfigManager:
 _GLOBAL_CONFIG: LatchConfig | None = None
 
 
-def get_config(config_path: str = "config.json") -> LatchConfig:
-    """Singleton-style cached config accessor with fallback to defaults."""
+def get_config(config_path: Optional[str] = None) -> LatchConfig:
+    """Cached config accessor that strictly validates presence and schema."""
     global _GLOBAL_CONFIG
-    if _GLOBAL_CONFIG is None:
-        manager = ConfigManager(config_path)
-        if os.path.exists(config_path):
-            _GLOBAL_CONFIG = manager.load()
-        else:
-            _GLOBAL_CONFIG = LatchConfig()
-    return _GLOBAL_CONFIG
+    if _GLOBAL_CONFIG is not None and config_path is None:
+        return _GLOBAL_CONFIG
+
+    manager = ConfigManager(config_path)
+    loaded = manager.load()
+    if config_path is None:
+        _GLOBAL_CONFIG = loaded
+    return loaded

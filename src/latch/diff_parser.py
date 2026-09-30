@@ -5,18 +5,24 @@ and packs added lines into structured context buffers for Julia-1.
 """
 
 from __future__ import annotations
-import os
+import fnmatch
+from pathlib import PurePath
 import re
 import shutil
 import subprocess
 import uuid
-from dataclasses import dataclass, field
-from typing import List, Sequence
+from dataclasses import dataclass
+from typing import List, Optional, Sequence
 
 
 class DiffParserError(Exception):
     """Raised when git diff cannot be extracted or environment is invalid."""
     pass
+
+
+def estimate_line_tokens(content: str) -> int:
+    """Canonical token estimation for a diff line (approx 4 chars/token + 2 formatting overhead)."""
+    return max(1, len(content) // 4) + 2
 
 
 @dataclass(frozen=True)
@@ -60,8 +66,15 @@ class DiffBatch:
 class DiffParser:
     """Extracts, filters, and batches staged git diff additions."""
 
-    def __init__(self, max_chunk_tokens: int = 750) -> None:
+    def __init__(
+        self,
+        max_chunk_tokens: int = 750,
+        context_lines: int = 3,
+        allowlist_paths: Optional[Sequence[str]] = None,
+    ) -> None:
         self.max_chunk_tokens = max_chunk_tokens
+        self.context_lines = context_lines
+        self.allowlist_paths = list(allowlist_paths or [])
 
     @staticmethod
     def preflight_check() -> None:
@@ -107,6 +120,23 @@ class DiffParser:
         raw_diff = self.get_staged_diff_text()
         return self.parse_diff_text(raw_diff)
 
+    def get_staged_batches(self) -> List[DiffBatch]:
+        """Extracts staged added lines and packs them into token-bounded DiffBatches."""
+        lines = self.get_staged_added_lines()
+        return self.pack_into_batches(lines)
+
+    def _is_allowlisted(self, file_path: str) -> bool:
+        """Check if file matches any path pattern in allowlist_paths."""
+        if not self.allowlist_paths:
+            return False
+        clean_path = file_path.replace("\\", "/")
+        pure_name = PurePath(file_path).name
+        for pattern in self.allowlist_paths:
+            clean_pat = pattern.replace("\\", "/")
+            if fnmatch.fnmatch(clean_path, clean_pat) or fnmatch.fnmatch(pure_name, clean_pat):
+                return True
+        return False
+
     def parse_diff_text(self, diff_text: str) -> List[AddedLine]:
         """Pure functional parser extracting added lines and line numbers."""
         added_lines: List[AddedLine] = []
@@ -137,6 +167,10 @@ class DiffParser:
             if in_binary_file or current_file is None:
                 continue
 
+            # Check if current file is in allowlist
+            if self._is_allowlisted(current_file):
+                continue
+
             # Check for hunk header
             hunk_match = hunk_header_pattern.match(line)
             if hunk_match:
@@ -148,13 +182,33 @@ class DiffParser:
 
             # Parse additions, deletions, and context
             if line.startswith("+") and not line.startswith("+++"):
-                added_lines.append(
-                    AddedLine(
-                        file_path=current_file,
-                        line_number=current_target_line,
-                        content=line[1:],  # Strip leading +
+                content = line[1:]  # Strip leading +
+
+                # Inline pragma: skip line if explicitly marked with latch:ignore
+                if "latch:ignore" in content:
+                    current_target_line += 1
+                    continue
+
+                # Oversized single line splitting (protects model context from giant minified lines)
+                max_line_chars = max(100, (self.max_chunk_tokens - 10) * 4)
+                if len(content) > max_line_chars:
+                    for start in range(0, len(content), max_line_chars):
+                        chunk_content = content[start : start + max_line_chars]
+                        added_lines.append(
+                            AddedLine(
+                                file_path=current_file,
+                                line_number=current_target_line,
+                                content=chunk_content,
+                            )
+                        )
+                else:
+                    added_lines.append(
+                        AddedLine(
+                            file_path=current_file,
+                            line_number=current_target_line,
+                            content=content,
+                        )
                     )
-                )
                 current_target_line += 1
             elif line.startswith("-") and not line.startswith("---"):
                 # Deletions do not advance target (new file) line counter
@@ -175,8 +229,7 @@ class DiffParser:
         current_tokens = 0
 
         for line in lines:
-            # Estimate tokens: roughly 4 chars per token + formatting overhead
-            line_tokens = max(1, len(line.content) // 4) + 2
+            line_tokens = estimate_line_tokens(line.content)
 
             if current_lines and (current_tokens + line_tokens > self.max_chunk_tokens):
                 batches.append(
@@ -236,8 +289,8 @@ def bisect_buffer(batch: DiffBatch) -> tuple[DiffBatch, DiffBatch]:
     left_lines = lines[:split_idx]
     right_lines = lines[split_idx:]
 
-    left_tokens = sum(max(1, len(l.content) // 4) + 2 for l in left_lines)
-    right_tokens = sum(max(1, len(l.content) // 4) + 2 for l in right_lines)
+    left_tokens = sum(estimate_line_tokens(l.content) for l in left_lines)
+    right_tokens = sum(estimate_line_tokens(l.content) for l in right_lines)
 
     left_batch = DiffBatch(
         batch_id=f"{batch.batch_id}-L",
@@ -250,3 +303,4 @@ def bisect_buffer(batch: DiffBatch) -> tuple[DiffBatch, DiffBatch]:
         estimated_tokens=right_tokens,
     )
     return left_batch, right_batch
+

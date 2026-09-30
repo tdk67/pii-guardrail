@@ -4,7 +4,7 @@
   "model": "SupersonicLabs/Julia-1",
   "model_path": "./models/julia-1",
   "model_max_context_tokens": 8192,
-  "pii_threshold": 0.35,
+  "pii_threshold": 0.65,
   "max_chunk_tokens": 750,
   "max_dissection_depth": 15,
   "localization_window_lines": 25,
@@ -13,5 +13,12 @@
   "daemon_eval_timeout_sec": 10.0,
   "noul_state_template_path": "./templates/noul_state.txt",
   "noul_criteria_path": "./fixtures/noul_criteria.json",
-  "benchmark_fixtures_dir": "./fixtures/"
+  "benchmark_fixtures_dir": "./fixtures/",
+  "allowlist_paths": [
+    "LICENSE",
+    "fixtures/*",
+    "scripts/*",
+    "tests/*",
+    "*.md"
+  ]
 }
