@@ -14,7 +14,7 @@ import urllib.error
 import urllib.request
 from typing import Optional
 from latch.config import LatchConfig, get_config
-from latch.daemon import resolve_token_file
+from latch.daemon import probe_daemon, resolve_token_file
 from latch.engine import EvaluationResult, JuliaEngine
 
 
@@ -50,38 +50,11 @@ class Client:
 
     def is_daemon_alive(self) -> bool:
         """Fast HTTP probe to check if the daemon is warm, listening, and mutually authenticated."""
-        token = self._get_daemon_token()
-        if not token:
-            # An authentic running daemon always writes its token file.
-            # Without token, refuse the unauthenticated daemon path immediately.
-            return False
-
-        timeout_sec = self.config.daemon_probe_timeout_ms / 1000.0
-        url = f"http://127.0.0.1:{self.config.daemon_port}/v1/health"
-        nonce = secrets.token_hex(16)
-        headers = {
-            "X-Latch-Token": token,
-            "X-Latch-Nonce": nonce,
-        }
-        req = urllib.request.Request(url, headers=headers, method="GET")
-        try:
-            with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
-                if resp.status == 200:
-                    data = json.loads(resp.read().decode("utf-8"))
-                    if data.get("status") != "ready" or data.get("authenticated") is not True:
-                        return False
-
-                    expected_challenge = hmac.new(
-                        token.encode("utf-8"),
-                        nonce.encode("utf-8"),
-                        hashlib.sha256,
-                    ).hexdigest()
-                    challenge_resp = data.get("challenge_response", "")
-                    return secrets.compare_digest(challenge_resp, expected_challenge)
-        except (urllib.error.URLError, TimeoutError, OSError, ConnectionResetError):
-            return False
-
-        return False
+        return probe_daemon(
+            port=self.config.daemon_port,
+            token=self._get_daemon_token(),  # latch:ignore
+            timeout_ms=self.config.daemon_probe_timeout_ms,
+        )
 
     def evaluate(self, state: str, request_id: str = "") -> EvaluationResult:
         """Evaluates state string via daemon IPC if available, otherwise in-process."""

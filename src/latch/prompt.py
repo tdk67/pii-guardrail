@@ -45,6 +45,7 @@ class StateBuilder:
         self.config = config or get_config()
         self.template_path = template_path or self.config.noul_prompt_template_path
         self._template: Optional[str] = None
+        self.active_template_source: str = "uninitialized"
 
     def _load_template(self) -> str:
         if self._template is not None:
@@ -54,11 +55,18 @@ class StateBuilder:
             try:
                 with open(self.template_path, "r", encoding="utf-8") as f:
                     self._template = f.read()
+                    self.active_template_source = str(self.template_path)
                     return self._template
-            except Exception:
-                pass
+            except OSError as err:
+                import sys
+                print(  # latch:ignore
+                    f"[WARN] Failed to read prompt template at '{self.template_path}': {err}. "  # latch:ignore
+                    "Falling back to embedded default template.",  # latch:ignore
+                    file=sys.stderr,  # latch:ignore
+                )
 
         self._template = DEFAULT_PROMPT_TEMPLATE
+        self.active_template_source = "embedded_default"
         return self._template
 
     def build(self, raw_code: str) -> str:

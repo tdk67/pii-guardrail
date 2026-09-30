@@ -116,7 +116,7 @@ class Presenter:
         ]
         return "\n".join(details)
 
-    def format_error(self, title: str, error_detail: str, action: str) -> str:
+    def format_error(self, title: str, error_detail: str, action: str, context: str = "Commit") -> str:  # latch:ignore
         """Strict fail-closed system error alert banner."""
         frame = self._build_frame("[LATCH SYSTEM ERROR] Evaluation Aborted (Fail-Closed)")
 
@@ -127,7 +127,7 @@ class Presenter:
             "",
             self._c(
                 self.YELLOW,
-                "Commit aborted under strict fail-closed safety policy."
+                f"{context} aborted under strict fail-closed safety policy."  # latch:ignore
             ),
         ]
         return "\n".join(details)

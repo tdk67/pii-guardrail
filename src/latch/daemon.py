@@ -196,9 +196,43 @@ class DaemonServer(ThreadingHTTPServer):
             pass
         super().server_close()
 
+def probe_daemon(port: int, token: Optional[str], timeout_ms: int) -> bool:
+    """Fast loopback HTTP probe validating daemon readiness and mutual HMAC authentication."""
+    if not token:
+        # Authentic running daemons always possess an active token.
+        return False
+
+    timeout_sec = timeout_ms / 1000.0
+    url = f"http://127.0.0.1:{port}/v1/health"
+    nonce = secrets.token_hex(16)
+    headers = {
+        "X-Latch-Token": token,  # latch:ignore
+        "X-Latch-Nonce": nonce,
+    }
+
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            if resp.status == 200:
+                data = json.loads(resp.read().decode("utf-8"))
+                if data.get("status") != "ready" or data.get("authenticated") is not True:
+                    return False
+
+                expected_challenge = hmac.new(  # latch:ignore
+                    token.encode("utf-8"),  # latch:ignore
+                    nonce.encode("utf-8"),
+                    hashlib.sha256,
+                ).hexdigest()
+                challenge_resp = data.get("challenge_response", "")
+                return secrets.compare_digest(challenge_resp, expected_challenge)
+    except (urllib.error.URLError, TimeoutError, OSError, ConnectionResetError):
+        return False
+
+    return False
+
 
 class DaemonManager:
-    """Manages daemon process lifecycle (start, stop, status)."""
+    """Controls the background daemon lifecycle: start, stop, status."""
 
     def __init__(
         self,
@@ -247,38 +281,11 @@ class DaemonManager:
 
     def is_running(self) -> bool:
         """Probe the daemon health endpoint to verify it is responsive and authenticated."""
-        timeout_sec = self.config.daemon_probe_timeout_ms / 1000.0
-        url = f"http://127.0.0.1:{self.config.daemon_port}/v1/health"
-        token = self.get_token()
-        headers = {}
-        nonce = None
-        if token:
-            nonce = secrets.token_hex(16)
-            headers["X-Latch-Token"] = token
-            headers["X-Latch-Nonce"] = nonce
-
-        req = urllib.request.Request(url, headers=headers, method="GET")
-        try:
-            with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
-                if resp.status == 200:
-                    data = json.loads(resp.read().decode("utf-8"))
-                    if data.get("status") != "ready":
-                        return False
-                    if token and nonce:
-                        expected_challenge = hmac.new(
-                            token.encode("utf-8"),
-                            nonce.encode("utf-8"),
-                            hashlib.sha256,
-                        ).hexdigest()
-                        challenge_resp = data.get("challenge_response", "")
-                        return bool(
-                            data.get("authenticated") is True
-                            and secrets.compare_digest(challenge_resp, expected_challenge)
-                        )
-                    return True
-        except (urllib.error.URLError, TimeoutError, OSError):
-            pass
-        return False
+        return probe_daemon(
+            port=self.config.daemon_port,
+            token=self.get_token(),
+            timeout_ms=self.config.daemon_probe_timeout_ms,
+        )
 
     def start_background(self) -> bool:
         """Start daemon in detached background process."""
@@ -356,7 +363,15 @@ class DaemonManager:
                         if "python" in chk.stdout.lower():
                             subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
                     else:
-                        os.kill(pid, signal.SIGTERM)
+                        # POSIX process identity verification before kill  # latch:ignore
+                        chk = subprocess.run(  # latch:ignore
+                            ["ps", "-p", str(pid), "-o", "comm="],  # latch:ignore
+                            capture_output=True,  # latch:ignore
+                            text=True,  # latch:ignore
+                            check=False,  # latch:ignore
+                        )  # latch:ignore
+                        if "python" in chk.stdout.lower():  # latch:ignore
+                            os.kill(pid, signal.SIGTERM)  # latch:ignore
                 except OSError:
                     pass
 

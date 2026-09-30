@@ -221,6 +221,8 @@ Latch provides two flexible mechanisms to handle deliberate public disclosures (
   Latch is designed exclusively for textual source code diffs. Binary files (e.g., compiled executables, `.png`, `.jpg`, `.pdf`, `.zip`, `.safetensors`, `.pyc`) are detected via git diff binary markers (`Binary files ... differ`) and bypassed (0ms bypass). Binary artifact scanning requires dedicated forensic analysis tools and is not evaluated by Julia-1.
 - **Single-Line Minified Assets**:
   Extremely long single lines (e.g., minified JavaScript bundles or lockfiles) are automatically split into chunked lines to prevent context overflow.
+- **Dense Algorithmic & Hex Tables (Conservative Sensitivity)**:
+  Files consisting of large dense mathematical constants, cryptographic lookup arrays, or hex tables (e.g. >300 lines of unbroken entropy) can trigger conservative sensitivity scores. Use `allowlist_paths` in `config.json` (e.g. `"src/crypto/tables/*"`) or mark specific table declarations with `# latch:ignore` to exempt known non-sensitive constants.
 
 ---
 
@@ -228,13 +230,15 @@ Latch provides two flexible mechanisms to handle deliberate public disclosures (
 
 1. **Mutual Authenticated Daemon IPC (Anti-Impersonation)**:
    The background daemon generates an ephemeral 32-byte cryptographically secure token on startup, stored in `.latch/daemon.token` with restrictive file permissions (`0o600`). The client validates the daemon via an HMAC-SHA256 challenge response during health checks (`GET /v1/health`), and all evaluation (`POST /v1/evaluate`) and shutdown (`POST /v1/shutdown`) requests require the `X-Latch-Token` header. Rogue daemons or unauthenticated processes on port 5138 are automatically rejected and fail-closed.
-2. **DNS Rebinding & CSRF Protection**:
+2. **Repository-Scoped Daemon Isolation (`.latch/`)**:
+   The daemon state, PID file (`.latch/daemon.pid`), execution logs (`.latch/daemon.log`), and authentication tokens reside exclusively within the repository-local `.latch/` directory (git-ignored). This guarantees that daemon lifecycle and mutual-auth credentials remain isolated to their respective project workspace on multi-repo developer machines.
+3. **DNS Rebinding & CSRF Protection**:
    The daemon rejects any HTTP request whose `Host` header does not match `127.0.0.1` or `localhost`, blocking browser-based cross-origin attacks.
-3. **Prompt Injection Hardening (Production & Benchmark)**:
+4. **Prompt Injection Hardening (Production & Benchmark)**:
    Staged diff additions are wrapped within explicit `<code_diff_payload>` delimiters by `StateBuilder`. Delimiter escape attempts are sanitized and adversarial directives (`system override`, `return false`, `ignore all instructions`) within comments are neutralized before inference.
-4. **Transparent Exemptions**:
+5. **Transparent Exemptions**:
    When lines or files are skipped due to allowlist path matching or `# latch:ignore` inline pragmas, Latch surfaces the exact count in the pre-commit output banner (e.g., `[OK] Latch: Clean (32ms, daemon, 2 pragma exempted)`), preventing silent bypasses.
-5. **Hook Safety & Clean Uninstall**:
+6. **Hook Safety & Clean Uninstall**:
    Running `python -m latch.cli uninstall` removes the installed pre-commit hook and cleanly restores any preexisting backup (`pre-commit.latch.bak`).
 
 ---

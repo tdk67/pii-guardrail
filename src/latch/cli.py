@@ -12,7 +12,7 @@ from typing import List, Optional
 from latch.client import Client
 from latch.config import ConfigError, LatchConfig, get_config
 from latch.daemon import DaemonManager
-from latch.diff_parser import DiffParser, DiffParserError
+from latch.diff_parser import DiffParser, DiffParserError, ParserStats
 from latch.dissection import Dissector
 from latch.engine import JuliaEngine, JuliaEngineError
 from latch.hook import HookInstallError, install_pre_commit_hook, uninstall_pre_commit_hook
@@ -37,23 +37,17 @@ def run_check(
     try:
         # Pre-flight check & staged diff extraction
         added_lines = pars.get_staged_added_lines()
-        stats = getattr(pars, "last_stats", None)
-        raw_total = getattr(stats, "total_exempted", 0)
-        raw_allowlist = getattr(stats, "exempted_allowlist_lines", 0)
-        raw_pragma = getattr(stats, "exempted_pragma_lines", 0)
-
-        safe_total = int(raw_total) if isinstance(raw_total, (int, float)) else 0
-        safe_allowlist = int(raw_allowlist) if isinstance(raw_allowlist, (int, float)) else 0
-        safe_pragma = int(raw_pragma) if isinstance(raw_pragma, (int, float)) else 0
+        raw_stats = getattr(pars, "last_stats", None)
+        stats = raw_stats if isinstance(raw_stats, ParserStats) else ParserStats()
 
         if not added_lines:
             # Pure deletions, binary files, allowlisted, or pragma-ignored diffs
-            if safe_total > 0:
+            if stats.total_exempted > 0:
                 clean_msg = pres.format_clean(
                     latency_ms=0,
                     mode="diff",
-                    exempted_allowlist=safe_allowlist,
-                    exempted_pragma=safe_pragma,
+                    exempted_allowlist=stats.exempted_allowlist_lines,
+                    exempted_pragma=stats.exempted_pragma_lines,
                 )
                 print(clean_msg)
             return 0
@@ -61,12 +55,12 @@ def run_check(
         # Pack into buffers
         batches = pars.pack_into_batches(added_lines)
         if not batches:
-            if safe_total > 0:
+            if stats.total_exempted > 0:
                 clean_msg = pres.format_clean(
                     latency_ms=0,
                     mode="diff",
-                    exempted_allowlist=safe_allowlist,
-                    exempted_pragma=safe_pragma,
+                    exempted_allowlist=stats.exempted_allowlist_lines,
+                    exempted_pragma=stats.exempted_pragma_lines,
                 )
                 print(clean_msg)
             return 0
@@ -119,8 +113,8 @@ def run_check(
         clean_msg = pres.format_clean(
             latency_ms=total_latency_ms,
             mode=client.last_mode,
-            exempted_allowlist=safe_allowlist,
-            exempted_pragma=safe_pragma,
+            exempted_allowlist=stats.exempted_allowlist_lines,
+            exempted_pragma=stats.exempted_pragma_lines,
         )
         print(clean_msg)
         return 0
@@ -232,6 +226,7 @@ def run_benchmark(config: Optional[LatchConfig] = None) -> int:
             title="Benchmark Failed - Model Engine Unavailable",
             error_detail=str(err),
             action="Run 'python -m latch.cli download-model' or ensure 'julia' runtime is installed.",
+            context="Benchmark evaluation",
         )
         print(err_msg, file=sys.stderr)
         return 1
@@ -240,6 +235,7 @@ def run_benchmark(config: Optional[LatchConfig] = None) -> int:
             title="Benchmark Failed - Fixture Error",
             error_detail=str(err),
             action="Ensure benchmark fixtures exist in config.json 'benchmark_fixtures_dir'.",
+            context="Benchmark evaluation",
         )
         print(err_msg, file=sys.stderr)
         return 1
@@ -248,6 +244,7 @@ def run_benchmark(config: Optional[LatchConfig] = None) -> int:
             title="Benchmark Failed - Unexpected Error",
             error_detail=str(err),
             action="Check benchmark fixtures and environment configuration.",
+            context="Benchmark evaluation",
         )
         print(err_msg, file=sys.stderr)
         return 1

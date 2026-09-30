@@ -77,6 +77,7 @@ class ParserStats:
 
 class DiffParser:
     """Extracts, filters, and batches staged git diff additions."""
+    last_stats: ParserStats = ParserStats()
 
     def __init__(
         self,

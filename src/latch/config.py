@@ -37,7 +37,6 @@ class LatchConfig:
     daemon_port: int = 5138
     daemon_probe_timeout_ms: int = 50
     daemon_eval_timeout_sec: float = 10.0
-    noul_state_template_path: str = "./templates/noul_state.txt"
     noul_prompt_template_path: str = "./templates/noul_prompt.txt"
     noul_criteria_path: str = "./fixtures/noul_criteria.json"
     benchmark_fixtures_dir: str = "./fixtures/"
@@ -46,7 +45,6 @@ class LatchConfig:
     def __post_init__(self) -> None:
         """Resolve paths relative to package root if running outside project CWD."""
         self.model_path = self._resolve_path(self.model_path, "LATCH_MODEL_PATH")
-        self.noul_state_template_path = self._resolve_path(self.noul_state_template_path)
         self.noul_prompt_template_path = self._resolve_path(self.noul_prompt_template_path)
         self.noul_criteria_path = self._resolve_path(self.noul_criteria_path)
         self.benchmark_fixtures_dir = self._resolve_path(self.benchmark_fixtures_dir)
