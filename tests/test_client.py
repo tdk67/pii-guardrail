@@ -45,3 +45,22 @@ def test_client_routes_to_live_daemon():
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_client_fallback_on_daemon_timeout_or_error():
+    """If daemon hangs or errors mid-request, client must catch it and fall back in-process."""
+    cfg = LatchConfig(daemon_port=5160, daemon_probe_timeout_ms=50, daemon_eval_timeout_sec=0.1)
+    
+    mock_in_process = MagicMock()
+    mock_in_process.evaluate.return_value = EvaluationResult(probability=0.20, latency_ms=5)
+
+    client = Client(config=cfg, in_process_engine=mock_in_process)
+    # Simulate daemon reporting alive, but hanging on evaluate
+    client.is_daemon_alive = MagicMock(return_value=True)  # type: ignore
+    client._evaluate_via_daemon = MagicMock(side_effect=TimeoutError("Request timed out"))  # type: ignore
+
+    result = client.evaluate("=== File: timeout.py ===\n+ code = 1")
+    assert result.probability == 0.20
+    assert client.last_mode == "in_process"
+    assert mock_in_process.evaluate.called
+

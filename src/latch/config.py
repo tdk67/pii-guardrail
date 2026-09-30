@@ -29,6 +29,7 @@ class LatchConfig:
     localization_window_lines: int = 25
     daemon_port: int = 5138
     daemon_probe_timeout_ms: int = 50
+    daemon_eval_timeout_sec: float = 10.0
     noul_state_template_path: str = "./templates/noul_state.txt"
     noul_criteria_path: str = "./fixtures/noul_criteria.json"
     benchmark_fixtures_dir: str = "./fixtures/"
@@ -50,6 +51,10 @@ class LatchConfig:
             raise ConfigError(f"max_dissection_depth must be positive, got {self.max_dissection_depth}.")
         if self.localization_window_lines <= 0:
             raise ConfigError(f"localization_window_lines must be positive, got {self.localization_window_lines}.")
+        if self.daemon_eval_timeout_sec <= 0:
+            raise ConfigError(
+                f"daemon_eval_timeout_sec must be positive, got {self.daemon_eval_timeout_sec}."
+            )
 
 
 class ConfigManager:

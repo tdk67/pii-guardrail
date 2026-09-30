@@ -72,7 +72,7 @@ class Client:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=10.0) as resp:
+        with urllib.request.urlopen(req, timeout=self.config.daemon_eval_timeout_sec) as resp:
             data = json.loads(resp.read().decode("utf-8"))
 
         return EvaluationResult(
