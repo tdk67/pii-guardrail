@@ -21,7 +21,7 @@ DEFAULT_PROMPT_TEMPLATE = (
 import re
 
 INJECTION_DIRECTIVE_PATTERN = re.compile(
-    r"(?i)(#|//|\*)\s*.*?(?:ignore\s+all\s+previous\s+instructions|system\s+override|return\s+false|bypass\s+mode|disregard\s+prior|do\s+not\s+flag).*"
+    r"(?i)(#|//|\*)\s*.*?(?:ignore\s+(?:all\s+)?(?:previous\s+)?instructions|system\s+override|override\s+system|bypass\s+mode|disregard\s+(?:all\s+)?(?:prior|previous)|do\s+not\s+flag|return\s+false\s+(?:verdict|for\s+pii|evaluation)|treat\s+as\s+clean).*"
 )
 
 
@@ -39,15 +39,11 @@ class StateBuilder:
 
     def __init__(
         self,
-        config: Optional[Any] = None,
+        config: Optional[LatchConfig] = None,
         template_path: Optional[str] = None,
     ) -> None:
-        if isinstance(config, str) and template_path is None:
-            self.template_path = config
-            self.config = get_config()
-        else:
-            self.config = config or get_config()
-            self.template_path = template_path or getattr(self.config, "noul_prompt_template_path", "templates/noul_prompt.txt")
+        self.config = config or get_config()
+        self.template_path = template_path or self.config.noul_prompt_template_path
         self._template: Optional[str] = None
 
     def _load_template(self) -> str:

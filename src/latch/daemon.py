@@ -6,6 +6,8 @@ Bound strictly to 127.0.0.1 for zero-trust local execution.
 """
 
 from __future__ import annotations
+import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -60,13 +62,25 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
 
         if self.path == "/v1/health":
             try:
+                is_auth = self._validate_token()
+                challenge_resp = None
+                nonce = self.headers.get("X-Latch-Nonce", "").strip()
+                server_token = getattr(self.server, "token", None)
+                if is_auth and server_token and nonce:
+                    challenge_resp = hmac.new(
+                        server_token.encode("utf-8"),
+                        nonce.encode("utf-8"),
+                        hashlib.sha256,
+                    ).hexdigest()
+
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 response = {
                     "status": "ready",
                     "model": "Julia-1",
-                    "authenticated": self._validate_token(),
+                    "authenticated": is_auth,
+                    "challenge_response": challenge_resp,
                 }
                 self.wfile.write(json.dumps(response).encode("utf-8"))
             except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, OSError):
@@ -232,15 +246,36 @@ class DaemonManager:
             return None
 
     def is_running(self) -> bool:
-        """Probe the daemon health endpoint to verify it is responsive."""
+        """Probe the daemon health endpoint to verify it is responsive and authenticated."""
         timeout_sec = self.config.daemon_probe_timeout_ms / 1000.0
         url = f"http://127.0.0.1:{self.config.daemon_port}/v1/health"
-        req = urllib.request.Request(url, method="GET")
+        token = self.get_token()
+        headers = {}
+        nonce = None
+        if token:
+            nonce = secrets.token_hex(16)
+            headers["X-Latch-Token"] = token
+            headers["X-Latch-Nonce"] = nonce
+
+        req = urllib.request.Request(url, headers=headers, method="GET")
         try:
             with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
                 if resp.status == 200:
                     data = json.loads(resp.read().decode("utf-8"))
-                    return data.get("status") == "ready"
+                    if data.get("status") != "ready":
+                        return False
+                    if token and nonce:
+                        expected_challenge = hmac.new(
+                            token.encode("utf-8"),
+                            nonce.encode("utf-8"),
+                            hashlib.sha256,
+                        ).hexdigest()
+                        challenge_resp = data.get("challenge_response", "")
+                        return bool(
+                            data.get("authenticated") is True
+                            and secrets.compare_digest(challenge_resp, expected_challenge)
+                        )
+                    return True
         except (urllib.error.URLError, TimeoutError, OSError):
             pass
         return False
@@ -253,8 +288,11 @@ class DaemonManager:
 
         print(f"Starting Latch daemon on 127.0.0.1:{self.config.daemon_port}...")
         
-        # Prefer virtual environment python interpreter if available
-        venv_py = os.path.abspath(os.path.join(".venv", "Scripts", "python.exe"))
+        # Cross-platform virtual environment python interpreter discovery
+        if sys.platform == "win32":
+            venv_py = os.path.abspath(os.path.join(".venv", "Scripts", "python.exe"))
+        else:
+            venv_py = os.path.abspath(os.path.join(".venv", "bin", "python"))
         python_exe = venv_py if os.path.exists(venv_py) else sys.executable
 
         # Spawn detached background process
@@ -287,6 +325,12 @@ class DaemonManager:
 
     def stop(self) -> bool:
         """Stop the running daemon cleanly."""
+        was_running = self.is_running()
+        pid = self.get_pid()
+        if not was_running and not pid:
+            print(f"[INFO] Latch daemon is not running on port {self.config.daemon_port}.")
+            return True
+
         url = f"http://127.0.0.1:{self.config.daemon_port}/v1/shutdown"
         headers = {}
         token = self.get_token()
@@ -299,11 +343,18 @@ class DaemonManager:
                 pass
         except Exception:
             # Fallback to terminating PID directly
-            pid = self.get_pid()
             if pid:
                 try:
                     if sys.platform == "win32":
-                        subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
+                        # Verify process identity before terminating to protect against PID recycling
+                        chk = subprocess.run(
+                            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                        )
+                        if "python" in chk.stdout.lower():
+                            subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
                     else:
                         os.kill(pid, signal.SIGTERM)
                 except OSError:

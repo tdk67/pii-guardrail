@@ -62,3 +62,43 @@ def test_benchmark_runner_evaluates_mock_fixtures(tmp_path):
     assert report.metrics.accuracy == 1.0
     assert report.metrics.fnr == 0.0
     assert "BENCHMARK EVALUATION REPORT" in report.formatted_summary()
+
+
+def test_benchmark_runner_raises_on_empty_fixtures(tmp_path):
+    """Verify empty fixtures directory raises BenchmarkError and fails closed (Finding 7)."""
+    from latch.benchmark import BenchmarkError
+    cfg = LatchConfig()
+    runner = BenchmarkRunner(config=cfg, client=MagicMock())
+    with pytest.raises(BenchmarkError) as excinfo:
+        runner.run(fixtures_dir=str(tmp_path))
+    assert "No benchmark test fixture samples found" in str(excinfo.value)
+
+
+def test_benchmark_metrics_with_pragma_samples():
+    """Verify pragma-exempt samples are tracked distinctly from model-evaluated samples (N4)."""
+    samples = [
+        SampleResult(
+            category="clean",
+            filename="impressum.py",
+            probability=0.0,
+            is_leak_expected=False,
+            latency_ms=0,
+            evaluated_by_model=False,
+            note="pragma-exempt",
+        ),
+        SampleResult(
+            category="pii",
+            filename="leak.py",
+            probability=0.95,
+            is_leak_expected=True,
+            latency_ms=30,
+            evaluated_by_model=True,
+        ),
+    ]
+    metrics = BenchmarkMetrics.calculate(samples, threshold=0.65)
+    assert metrics.total_samples == 2
+    assert metrics.model_evaluated_samples == 1
+    assert metrics.true_positives == 1
+    assert metrics.true_negatives == 1
+    assert metrics.accuracy == 1.0
+

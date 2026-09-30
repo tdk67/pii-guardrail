@@ -11,12 +11,26 @@ import os
 from pathlib import Path
 import platform
 import time
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 from latch.client import Client
-from latch.config import LatchConfig, get_config
+from latch.config import DEFAULT_PII_THRESHOLD, LatchConfig, get_config
 from latch.diff_parser import DiffParser
 from latch.engine import EvaluationResult
 from latch.prompt import StateBuilder
+
+
+class BenchmarkError(Exception):
+    """Raised when benchmark suite cannot find fixtures or fails validation."""
+    pass
+
+
+# Deterministic manifest mapping fixture filenames to expected leak ground truth
+ADVERSARIAL_MANIFEST: Dict[str, bool] = {
+    "sample_injection_benign.py": False,
+    "sample_injection_delimiter.py": True,
+    "sample_injection_override.py": True,
+    "sample_injection_override_large.py": True,
+}
 
 
 @dataclass
@@ -27,9 +41,11 @@ class SampleResult:
     probability: float
     is_leak_expected: bool
     latency_ms: int
+    evaluated_by_model: bool = True
+    note: str = ""
     error: Optional[str] = None
 
-    def is_correct(self, threshold: float = 0.65) -> bool:
+    def is_correct(self, threshold: float = DEFAULT_PII_THRESHOLD) -> bool:
         predicted_leak = self.probability >= threshold
         return predicted_leak == self.is_leak_expected
 
@@ -38,6 +54,7 @@ class SampleResult:
 class BenchmarkMetrics:
     """Aggregated quantitative performance and accuracy metrics."""
     total_samples: int
+    model_evaluated_samples: int
     true_positives: int
     true_negatives: int
     false_positives: int
@@ -49,10 +66,11 @@ class BenchmarkMetrics:
     avg_latency_ms: float
 
     @classmethod
-    def calculate(cls, samples: List[SampleResult], threshold: float = 0.65) -> BenchmarkMetrics:
+    def calculate(cls, samples: List[SampleResult], threshold: float = DEFAULT_PII_THRESHOLD) -> BenchmarkMetrics:
         if not samples:
             return cls(
                 total_samples=0,
+                model_evaluated_samples=0,
                 true_positives=0,
                 true_negatives=0,
                 false_positives=0,
@@ -71,9 +89,13 @@ class BenchmarkMetrics:
         adv_total = 0
         adv_correct = 0
         total_latency = 0
+        total = len(samples)
+        model_evaluated = 0
 
         for s in samples:
             total_latency += s.latency_ms
+            if s.evaluated_by_model:
+                model_evaluated += 1
             predicted_leak = s.probability >= threshold
             
             if s.is_leak_expected:
@@ -92,7 +114,6 @@ class BenchmarkMetrics:
                 if s.is_correct(threshold):
                     adv_correct += 1
 
-        total = len(samples)
         accuracy = (tp + tn) / total if total > 0 else 0.0
         fnr = fn / (tp + fn) if (tp + fn) > 0 else 0.0
         fpr = fp / (tn + fp) if (tn + fp) > 0 else 0.0
@@ -101,6 +122,7 @@ class BenchmarkMetrics:
 
         return cls(
             total_samples=total,
+            model_evaluated_samples=model_evaluated,
             true_positives=tp,
             true_negatives=tn,
             false_positives=fp,
@@ -118,7 +140,7 @@ class BenchmarkResult:
     """Complete benchmark report including metrics and per-sample results."""
     metrics: BenchmarkMetrics
     samples: List[SampleResult]
-    threshold: float = 0.65
+    threshold: float = DEFAULT_PII_THRESHOLD
 
     def formatted_summary(self) -> str:
         """Renders an executive evaluation table for terminal display."""
@@ -141,14 +163,15 @@ class BenchmarkResult:
         for s in self.samples:
             status = "PASS" if s.is_correct(self.threshold) else "FAIL"
             exp_str = "LEAK" if s.is_leak_expected else "CLEAN"
+            eval_tag = f" [{s.note}]" if s.note else ""
             lines.append(
-                f" {s.category:<14} | {s.filename:<28} | {s.probability:<6.2f} | {exp_str:<8} | {status:<7}"
+                f" {s.category:<14} | {s.filename:<28} | {s.probability:<6.2f} | {exp_str:<8} | {status:<7}{eval_tag}"
             )
 
         lines.extend([
             "-------------------------------------------------------------------------------",
             " SUMMARY METRICS:",
-            f"   Total Evaluated Samples : {m.total_samples}",
+            f"   Total Samples           : {m.total_samples} ({m.model_evaluated_samples} evaluated by model, {m.total_samples - m.model_evaluated_samples} pragma-exempted)",
             f"   Overall Accuracy        : {m.accuracy * 100:.1f}%",
             f"   False Negative Rate (FNR): {m.fnr * 100:.1f}%  (Target: 0.0% - zero missed leaks)",
             f"   False Positive Rate (FPR): {m.fpr * 100:.1f}%",
@@ -182,7 +205,7 @@ class BenchmarkRunner:
         categories = [
             ("clean", base_dir / "clean_samples", False),
             ("pii", base_dir / "pii_samples", True),
-            ("adversarial", base_dir / "adversarial_samples", None),  # Dynamically determined
+            ("adversarial", base_dir / "adversarial_samples", None),
         ]
 
         for cat_name, folder, default_expected in categories:
@@ -208,7 +231,11 @@ class BenchmarkRunner:
                 if not added_lines:
                     # Clean (all lines ignored by pragma or allowlist)
                     eval_result = EvaluationResult(probability=0.0, latency_ms=0)
+                    evaluated_by_model = False
+                    note = "pragma-exempt"
                 else:
+                    evaluated_by_model = True
+                    note = ""
                     batches = self.diff_parser.pack_into_batches(added_lines)
                     max_prob = 0.0
                     total_lat = 0
@@ -231,8 +258,7 @@ class BenchmarkRunner:
                     )
 
                 if cat_name == "adversarial":
-                    # If filename contains 'clean' or 'benign', expected is clean (False), otherwise leak (True)
-                    is_expected = False if ("clean" in file_path.stem or "benign" in file_path.stem) else True
+                    is_expected = ADVERSARIAL_MANIFEST.get(file_path.name, True)
                 else:
                     is_expected = bool(default_expected)
 
@@ -243,9 +269,14 @@ class BenchmarkRunner:
                         probability=eval_result.probability,
                         is_leak_expected=is_expected,
                         latency_ms=eval_result.latency_ms,
+                        evaluated_by_model=evaluated_by_model,
+                        note=note,
                         error=eval_result.error,
                     )
                 )
+
+        if not samples:
+            raise BenchmarkError(f"No benchmark test fixture samples found in '{base_dir}'.")
 
         metrics = BenchmarkMetrics.calculate(samples, threshold=self.config.pii_threshold)
         return BenchmarkResult(

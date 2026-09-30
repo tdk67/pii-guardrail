@@ -61,11 +61,30 @@ class Presenter:
 
         return [top, mid, bot]
 
-    def format_clean(self, latency_ms: int, mode: str = "daemon") -> str:
+    def format_clean(
+        self,
+        latency_ms: int,
+        mode: str = "daemon",
+        exempted_allowlist: int = 0,
+        exempted_pragma: int = 0,
+    ) -> str:
         """Quiet monospace success output for approved commits."""
         symbol = "✓" if self.supports_unicode else "[OK]"
         prefix = self._c(self.GREEN + self.BOLD, f"{symbol} Latch:")
-        msg = self._c(self.GREEN, f" Clean ({latency_ms}ms)")
+        mode_label = "daemon" if mode == "daemon" else ("diff" if mode == "diff" else "in-process")
+
+        exemption_parts = []
+        if exempted_allowlist > 0:
+            exemption_parts.append(f"{exempted_allowlist} allowlist")
+        if exempted_pragma > 0:
+            exemption_parts.append(f"{exempted_pragma} pragma")
+
+        if exemption_parts:
+            exemptions_str = f", {', '.join(exemption_parts)} exempted"
+        else:
+            exemptions_str = ""
+
+        msg = self._c(self.GREEN, f" Clean ({latency_ms}ms, {mode_label}{exemptions_str})")
         return f"{prefix}{msg}"
 
     def format_blocked(

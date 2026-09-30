@@ -15,6 +15,10 @@ from typing import Any, Dict, List, Optional, Set
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 
 
+DEFAULT_PII_THRESHOLD: float = 0.65
+SUPPORTED_CONFIG_VERSION: str = "1.0"
+
+
 class ConfigError(Exception):
     """Raised when configuration file is missing, corrupt, or invalid."""
     pass
@@ -22,11 +26,11 @@ class ConfigError(Exception):
 
 @dataclass
 class LatchConfig:
-    config_version: str = "1.0"
+    config_version: str = SUPPORTED_CONFIG_VERSION
     model: str = "SupersonicLabs/Julia-1"
     model_path: str = "./models/julia-1"
     model_max_context_tokens: int = 8192
-    pii_threshold: float = 0.65
+    pii_threshold: float = DEFAULT_PII_THRESHOLD
     max_chunk_tokens: int = 750
     max_dissection_depth: int = 15
     localization_window_lines: int = 25
@@ -34,6 +38,7 @@ class LatchConfig:
     daemon_probe_timeout_ms: int = 50
     daemon_eval_timeout_sec: float = 10.0
     noul_state_template_path: str = "./templates/noul_state.txt"
+    noul_prompt_template_path: str = "./templates/noul_prompt.txt"
     noul_criteria_path: str = "./fixtures/noul_criteria.json"
     benchmark_fixtures_dir: str = "./fixtures/"
     allowlist_paths: List[str] = field(default_factory=list)
@@ -42,6 +47,7 @@ class LatchConfig:
         """Resolve paths relative to package root if running outside project CWD."""
         self.model_path = self._resolve_path(self.model_path, "LATCH_MODEL_PATH")
         self.noul_state_template_path = self._resolve_path(self.noul_state_template_path)
+        self.noul_prompt_template_path = self._resolve_path(self.noul_prompt_template_path)
         self.noul_criteria_path = self._resolve_path(self.noul_criteria_path)
         self.benchmark_fixtures_dir = self._resolve_path(self.benchmark_fixtures_dir)
 
@@ -62,6 +68,10 @@ class LatchConfig:
 
     def validate(self) -> None:
         """Validate config parameters against operational boundaries."""
+        if self.config_version != SUPPORTED_CONFIG_VERSION:
+            raise ConfigError(
+                f"Unsupported config_version: '{self.config_version}'. Supported version is '{SUPPORTED_CONFIG_VERSION}'."
+            )
         if not (0.0 <= self.pii_threshold <= 1.0):
             raise ConfigError(
                 f"Invalid pii_threshold: {self.pii_threshold}. Must be between 0.0 and 1.0."

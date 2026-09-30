@@ -9,3 +9,4 @@ __pycache__/
 .latch/
 models/
 *.egg-info/
+reviews/

@@ -79,7 +79,7 @@ python -m latch.cli check
 
 - **Clean Diff (`exit 0`)**:
   ```text
-  [OK] Latch: Clean (32ms)
+  ✓ Latch: Clean (32ms, daemon)
   ```
 - **Sensitive Leak Detected (`exit 1`)**:
   ```text
@@ -218,7 +218,7 @@ Latch provides two flexible mechanisms to handle deliberate public disclosures (
 ## Known Limitations
 
 - **Binary File Scanning (Out of Scope)**:
-  Latch is designed exclusively for textual source code diffs. Binary files (e.g., compiled executables, `.png`, `.jpg`, `.pdf`, `.zip`, `.safetensors`, `.pyc`) are detected via null-byte inspection and git metadata and bypassed (0ms bypass). Binary artifact scanning requires dedicated forensic analysis tools and is not evaluated by Julia-1.
+  Latch is designed exclusively for textual source code diffs. Binary files (e.g., compiled executables, `.png`, `.jpg`, `.pdf`, `.zip`, `.safetensors`, `.pyc`) are detected via git diff binary markers (`Binary files ... differ`) and bypassed (0ms bypass). Binary artifact scanning requires dedicated forensic analysis tools and is not evaluated by Julia-1.
 - **Single-Line Minified Assets**:
   Extremely long single lines (e.g., minified JavaScript bundles or lockfiles) are automatically split into chunked lines to prevent context overflow.
 
@@ -226,22 +226,26 @@ Latch provides two flexible mechanisms to handle deliberate public disclosures (
 
 ## Security Architecture
 
-1. **Authenticated Daemon IPC (Anti-Impersonation)**:
-   The background daemon generates an ephemeral 32-byte cryptographically secure token on startup, stored in `.latch/daemon.token` with restrictive file permissions (`0o600`). All evaluation (`POST /v1/evaluate`) and shutdown (`POST /v1/shutdown`) requests require the `X-Latch-Token` header.
+1. **Mutual Authenticated Daemon IPC (Anti-Impersonation)**:
+   The background daemon generates an ephemeral 32-byte cryptographically secure token on startup, stored in `.latch/daemon.token` with restrictive file permissions (`0o600`). The client validates the daemon via an HMAC-SHA256 challenge response during health checks (`GET /v1/health`), and all evaluation (`POST /v1/evaluate`) and shutdown (`POST /v1/shutdown`) requests require the `X-Latch-Token` header. Rogue daemons or unauthenticated processes on port 5138 are automatically rejected and fail-closed.
 2. **DNS Rebinding & CSRF Protection**:
    The daemon rejects any HTTP request whose `Host` header does not match `127.0.0.1` or `localhost`, blocking browser-based cross-origin attacks.
-3. **Prompt Injection Hardening**:
-   Staged diff additions are wrapped within explicit `<code_diff_payload>` delimiters. Delimiter escape attempts are sanitized and adversarial directives (`system override`, `return false`, `ignore all instructions`) within comments are neutralized before inference.
-4. **Hook Safety & Clean Uninstall**:
+3. **Prompt Injection Hardening (Production & Benchmark)**:
+   Staged diff additions are wrapped within explicit `<code_diff_payload>` delimiters by `StateBuilder`. Delimiter escape attempts are sanitized and adversarial directives (`system override`, `return false`, `ignore all instructions`) within comments are neutralized before inference.
+4. **Transparent Exemptions**:
+   When lines or files are skipped due to allowlist path matching or `# latch:ignore` inline pragmas, Latch surfaces the exact count in the pre-commit output banner (e.g., `[OK] Latch: Clean (32ms, daemon, 2 pragma exempted)`), preventing silent bypasses.
+5. **Hook Safety & Clean Uninstall**:
    Running `python -m latch.cli uninstall` removes the installed pre-commit hook and cleanly restores any preexisting backup (`pre-commit.latch.bak`).
 
 ---
 
 ## All Build Slices Completed & Verified
 
-All 5 core architectural slices defined in the technical specification and PRD are implemented, covered by 49 automated unit tests, and verified end-to-end on device:
+All 5 core architectural slices defined in the technical specification and PRD are implemented, covered by 56 automated unit tests, and verified end-to-end with the live Julia-1 model:
 - **FNR (False Negative Rate)**: **0.0%** (zero missed leaks across all credentials and personal records)
 - **Prompt Injection Resilience**: **100.0%** (all adversarial injection attempts successfully blocked)
+- **Accuracy**: **93.8%** across 16 adversarial, PII, and clean algorithm fixtures
+- **Empirical Report**: See [BENCHMARK_REPORT.md](docs/BENCHMARK_REPORT.md) for full reproducible baseline metrics, per-fixture probabilities, and hardware specs.
 - **Clean Code Architecture**: 100% standard library IPC, zero silent fallback heuristics, strict fail-closed enforcement.
 
 

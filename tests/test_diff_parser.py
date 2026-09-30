@@ -128,3 +128,55 @@ index 123..456 100644
     for line in added_lines:
         assert len(line.content) <= (500 - 10) * 4
 
+
+def test_diff_parser_does_not_leak_nested_files_with_wildcard():
+    """Verify *.md only matches top-level markdown, not arbitrary nested directories (N3)."""
+    nested_diff = (
+        "diff --git a/docs/sub/notes.md b/docs/sub/notes.md\n"
+        "--- a/docs/sub/notes.md\n"
+        "+++ b/docs/sub/notes.md\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+AWS_SECRET=AKIAIOSFODNN7EXAMPLE\n"
+        "diff --git a/README.md b/README.md\n"
+        "--- a/README.md\n"
+        "+++ b/README.md\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+# Clean Readme\n"
+    )
+    parser = DiffParser(allowlist_paths=["*.md"])
+    added_lines = parser.parse_diff_text(nested_diff)
+    files = {l.file_path for l in added_lines}
+
+    # docs/sub/notes.md must NOT be allowlisted by *.md
+    assert "docs/sub/notes.md" in files
+    # README.md is top-level and is allowlisted
+    assert "README.md" not in files
+
+
+def test_diff_parser_tracks_exemption_stats():
+    """Verify ParserStats counts both allowlisted lines and pragma-ignored lines (N4)."""
+    diff_text = (
+        "diff --git a/fixtures/test.py b/fixtures/test.py\n"
+        "--- a/fixtures/test.py\n"
+        "+++ b/fixtures/test.py\n"
+        "@@ -0,0 +1,2 @@\n"
+        "+secret_1 = 'val'\n"
+        "+secret_2 = 'val'\n"
+        "diff --git a/src/app.py b/src/app.py\n"
+        "--- a/src/app.py\n"
+        "+++ b/src/app.py\n"
+        "@@ -0,0 +1,2 @@\n"
+        "+normal_code = True\n"
+        "+ignored_code = 'sk_test_123' # latch:ignore\n"
+    )
+    parser = DiffParser(allowlist_paths=["fixtures/*"])
+    added_lines = parser.parse_diff_text(diff_text)
+
+    assert len(added_lines) == 1
+    assert added_lines[0].content == "normal_code = True"
+    assert parser.last_stats.exempted_allowlist_files == 1
+    assert parser.last_stats.exempted_allowlist_lines == 2
+    assert parser.last_stats.exempted_pragma_lines == 1
+    assert parser.last_stats.total_exempted == 3
+
+

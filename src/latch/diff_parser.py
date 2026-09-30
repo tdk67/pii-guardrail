@@ -63,6 +63,18 @@ class DiffBatch:
         return "\n\n".join(blocks)
 
 
+@dataclass
+class ParserStats:
+    """Statistics on parsed diff additions and exemptions."""
+    exempted_allowlist_files: int = 0
+    exempted_allowlist_lines: int = 0
+    exempted_pragma_lines: int = 0
+
+    @property
+    def total_exempted(self) -> int:
+        return self.exempted_allowlist_lines + self.exempted_pragma_lines
+
+
 class DiffParser:
     """Extracts, filters, and batches staged git diff additions."""
 
@@ -75,6 +87,7 @@ class DiffParser:
         self.max_chunk_tokens = max_chunk_tokens
         self.context_lines = context_lines
         self.allowlist_paths = list(allowlist_paths or [])
+        self.last_stats: ParserStats = ParserStats()
 
     @staticmethod
     def preflight_check() -> None:
@@ -130,16 +143,27 @@ class DiffParser:
         if not self.allowlist_paths:
             return False
         clean_path = file_path.replace("\\", "/")
-        pure_name = PurePath(file_path).name
+        p = PurePath(clean_path)
         for pattern in self.allowlist_paths:
             clean_pat = pattern.replace("\\", "/")
-            if fnmatch.fnmatch(clean_path, clean_pat) or fnmatch.fnmatch(pure_name, clean_pat):
-                return True
+            if "/" in clean_pat or "**" in clean_pat:
+                if fnmatch.fnmatch(clean_path, clean_pat):
+                    return True
+            else:
+                # Top-level glob pattern without slashes (e.g. *.md) only matches root-level files
+                if "/" not in clean_path and fnmatch.fnmatch(clean_path, clean_pat):
+                    return True
+                # Exact basename match if pattern is a specific filename without wildcards (e.g. LICENSE)
+                if "*" not in clean_pat and p.name == clean_pat:
+                    return True
         return False
 
     def parse_diff_text(self, diff_text: str) -> List[AddedLine]:
         """Pure functional parser extracting added lines and line numbers."""
         added_lines: List[AddedLine] = []
+        self.last_stats = ParserStats()
+        allowlisted_files_seen: set[str] = set()
+
         if not diff_text.strip():
             return added_lines
 
@@ -169,6 +193,11 @@ class DiffParser:
 
             # Check if current file is in allowlist
             if self._is_allowlisted(current_file):
+                if line.startswith("+") and not line.startswith("+++"):
+                    self.last_stats.exempted_allowlist_lines += 1
+                    if current_file not in allowlisted_files_seen:
+                        allowlisted_files_seen.add(current_file)
+                        self.last_stats.exempted_allowlist_files += 1
                 continue
 
             # Check for hunk header
@@ -186,6 +215,7 @@ class DiffParser:
 
                 # Inline pragma: skip line if explicitly marked with latch:ignore
                 if "latch:ignore" in content:
+                    self.last_stats.exempted_pragma_lines += 1
                     current_target_line += 1
                     continue
 

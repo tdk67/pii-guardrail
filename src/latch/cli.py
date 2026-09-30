@@ -17,6 +17,7 @@ from latch.dissection import Dissector
 from latch.engine import JuliaEngine, JuliaEngineError
 from latch.hook import HookInstallError, install_pre_commit_hook, uninstall_pre_commit_hook
 from latch.presenter import Presenter
+from latch.prompt import StateBuilder
 
 
 def run_check(
@@ -36,23 +37,49 @@ def run_check(
     try:
         # Pre-flight check & staged diff extraction
         added_lines = pars.get_staged_added_lines()
+        stats = getattr(pars, "last_stats", None)
+        raw_total = getattr(stats, "total_exempted", 0)
+        raw_allowlist = getattr(stats, "exempted_allowlist_lines", 0)
+        raw_pragma = getattr(stats, "exempted_pragma_lines", 0)
+
+        safe_total = int(raw_total) if isinstance(raw_total, (int, float)) else 0
+        safe_allowlist = int(raw_allowlist) if isinstance(raw_allowlist, (int, float)) else 0
+        safe_pragma = int(raw_pragma) if isinstance(raw_pragma, (int, float)) else 0
+
         if not added_lines:
-            # Pure deletions, binary files, or empty diffs bypass inspection instantly
+            # Pure deletions, binary files, allowlisted, or pragma-ignored diffs
+            if safe_total > 0:
+                clean_msg = pres.format_clean(
+                    latency_ms=0,
+                    mode="diff",
+                    exempted_allowlist=safe_allowlist,
+                    exempted_pragma=safe_pragma,
+                )
+                print(clean_msg)
             return 0
 
         # Pack into buffers
         batches = pars.pack_into_batches(added_lines)
         if not batches:
+            if safe_total > 0:
+                clean_msg = pres.format_clean(
+                    latency_ms=0,
+                    mode="diff",
+                    exempted_allowlist=safe_allowlist,
+                    exempted_pragma=safe_pragma,
+                )
+                print(clean_msg)
             return 0
 
         # Two-tier runner: routes to warm daemon (sub-50ms) or falls back in-process
         client = Client(cfg, in_process_engine=engine)
+        state_builder = StateBuilder(config=cfg)
         total_latency_ms = 0
 
         # Evaluate each batch
         for batch in batches:
-            state_text = batch.formatted_text()
-            eval_result = client.evaluate(state_text, request_id=batch.batch_id)
+            prompt_state = state_builder.build(batch.formatted_text())
+            eval_result = client.evaluate(prompt_state, request_id=batch.batch_id)
             total_latency_ms += eval_result.latency_ms
 
             if eval_result.error is not None:
@@ -73,7 +100,7 @@ def run_check(
                 )
                 dissect_res = dissector.dissect(
                     batch,
-                    evaluate_fn=lambda txt: client.evaluate(txt, request_id=batch.batch_id),
+                    evaluate_fn=lambda txt: client.evaluate(state_builder.build(txt), request_id=batch.batch_id),
                     initial_probability=eval_result.probability,
                 )
 
@@ -89,7 +116,12 @@ def run_check(
                 return 1
 
         # All batches approved
-        clean_msg = pres.format_clean(latency_ms=total_latency_ms, mode=client.last_mode)
+        clean_msg = pres.format_clean(
+            latency_ms=total_latency_ms,
+            mode=client.last_mode,
+            exempted_allowlist=safe_allowlist,
+            exempted_pragma=safe_pragma,
+        )
         print(clean_msg)
         return 0
 
@@ -187,12 +219,38 @@ def run_uninstall(repo_root: Optional[str] = None) -> int:
 def run_benchmark(config: Optional[LatchConfig] = None) -> int:
     """Run benchmark evaluation suite across test fixtures."""
     cfg = config or get_config()
-    from latch.benchmark import BenchmarkRunner
+    pres = Presenter()
+    from latch.benchmark import BenchmarkError, BenchmarkRunner
     print("Executing Latch Benchmark Evaluation Suite...")
-    runner = BenchmarkRunner(config=cfg)
-    report = runner.run()
-    print("\n" + report.formatted_summary())
-    return 0 if report.metrics.fnr == 0.0 else 1
+    try:
+        runner = BenchmarkRunner(config=cfg)
+        report = runner.run()
+        print("\n" + report.formatted_summary())
+        return 0 if (report.metrics.fnr == 0.0 and report.metrics.total_samples > 0) else 1
+    except JuliaEngineError as err:
+        err_msg = pres.format_error(
+            title="Benchmark Failed - Model Engine Unavailable",
+            error_detail=str(err),
+            action="Run 'python -m latch.cli download-model' or ensure 'julia' runtime is installed.",
+        )
+        print(err_msg, file=sys.stderr)
+        return 1
+    except BenchmarkError as err:
+        err_msg = pres.format_error(
+            title="Benchmark Failed - Fixture Error",
+            error_detail=str(err),
+            action="Ensure benchmark fixtures exist in config.json 'benchmark_fixtures_dir'.",
+        )
+        print(err_msg, file=sys.stderr)
+        return 1
+    except Exception as err:
+        err_msg = pres.format_error(
+            title="Benchmark Failed - Unexpected Error",
+            error_detail=str(err),
+            action="Check benchmark fixtures and environment configuration.",
+        )
+        print(err_msg, file=sys.stderr)
+        return 1
 
 
 def main(args: Optional[list[str]] = None) -> None:

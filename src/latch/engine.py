@@ -12,7 +12,7 @@ import os
 import time
 from dataclasses import dataclass
 from typing import Dict, Optional
-from latch.config import LatchConfig
+from latch.config import DEFAULT_PII_THRESHOLD, LatchConfig
 
 
 class JuliaEngineError(Exception):
@@ -33,7 +33,7 @@ class EvaluationResult:
     request_id: str = ""
     error: Optional[str] = None
 
-    def is_clean(self, threshold: float = 0.65) -> bool:
+    def is_clean(self, threshold: float = DEFAULT_PII_THRESHOLD) -> bool:
         """Returns True if P(PII) is below the refusal threshold."""
         return self.probability < threshold
 
@@ -41,19 +41,14 @@ class EvaluationResult:
 class JuliaEngine:
     """Manages Julia-1 model loading and CPU inference."""
 
-    def __init__(self, config: LatchConfig, mock_inference: bool = False) -> None:
+    def __init__(self, config: LatchConfig) -> None:
         self.config = config
-        self.mock_inference = mock_inference
         self._model = None
         self._initialized = False
 
     def load(self) -> None:
         """Load Julia-1 model into memory."""
         if self._initialized:
-            return
-
-        if self.mock_inference:
-            self._initialized = True
             return
 
         model_dir = os.path.abspath(self.config.model_path)
@@ -88,15 +83,6 @@ class JuliaEngine:
 
         if not self._initialized:
             self.load()
-
-        if self.mock_inference:
-            prob = self._heuristic_mock_score(state)
-            latency = int((time.perf_counter() - start_time) * 1000)
-            return EvaluationResult(
-                probability=prob,
-                latency_ms=max(1, latency),
-                request_id=request_id,
-            )
 
         if not hasattr(self._model, "predict"):
             raise JuliaEngineError("Julia-1 model is not loaded or does not support .predict().")

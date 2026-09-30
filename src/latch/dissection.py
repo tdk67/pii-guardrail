@@ -9,6 +9,7 @@ Implements conservative fallback: if both split halves score below threshold
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Optional
+from latch.config import DEFAULT_PII_THRESHOLD
 from latch.diff_parser import DiffBatch, bisect_buffer
 from latch.engine import EvaluationResult
 
@@ -28,7 +29,7 @@ class Dissector:
 
     def __init__(
         self,
-        threshold: float = 0.65,
+        threshold: float = DEFAULT_PII_THRESHOLD,
         window_limit: int = 25,
         max_depth: int = 15,
     ) -> None:

@@ -51,3 +51,17 @@ def test_engine_fails_loudly_when_julia_import_fails(tmp_path, monkeypatch):
     assert "not installed or importable" in str(excinfo.value).lower()
     assert engine._model is None
 
+
+def test_engine_has_no_mock_inference_and_typed_errors(tmp_path):
+    """Verify mock_inference dead code is eliminated and only typed errors are raised (N6)."""
+    cfg = LatchConfig(model_path=str(tmp_path / "missing"))
+    engine = JuliaEngine(cfg)
+
+    # Dead mock_inference attribute should not exist
+    assert not hasattr(engine, "mock_inference")
+
+    # Evaluate must raise typed JuliaEngineError, never AttributeError
+    with pytest.raises(JuliaEngineError):
+        engine.evaluate("x = 1")
+
+
