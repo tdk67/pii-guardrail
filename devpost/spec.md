@@ -91,7 +91,7 @@ flowchart TD
 1. **Clone & Virtual Environment**:
    ```bash
    git clone <repo-url>
-   cd Edureka_capstone03
+   cd <project-directory>
    python -m venv .venv
    # Windows PowerShell:
    .venv\Scripts\Activate.ps1
@@ -323,7 +323,7 @@ class DissectionResult:
 ## File Structure
 
 ```text
-Edureka_capstone03/
+<project-root>/
 ├── config.json                 # Operational parameters (thresholds, token limits, port)
 ├── .env.example                # Clean environment template (no secrets required for local)
 ├── requirements.txt            # Python dependencies (torch, transformers, etc.)

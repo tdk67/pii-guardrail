@@ -30,7 +30,7 @@ Developers frequently leak sensitive personal data (names with phone numbers, ho
 
 ```bash
 git clone <repo-url>
-cd Edureka_capstone03
+cd <project-directory>
 
 # Create virtual environment with Python 3.12
 py -3.12 -m venv .venv
