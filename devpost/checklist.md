@@ -39,7 +39,7 @@ Build mode: learn mode (TDD: write test first for every slice; full accuracy eva
   Learner check: Start the daemon with `python -m latch.cli daemon start`, run a check to see the sub-50ms response, then stop the daemon and run the check again to see the cold-start fallback.
   Commit: `Add local HTTP daemon for warm sub-50ms evaluation and cold-start fallback`
 
-- [ ] **4. One-Touch Git Hook Installation and Strict Fail-Closed Safeguard**
+- [x] **4. One-Touch Git Hook Installation and Strict Fail-Closed Safeguard**
   Becomes usable: Running `python -m latch.cli install` automatically writes `.git/hooks/pre-commit` configured with the absolute virtualenv Python path, so that standard `git commit` commands trigger Latch directly. If model weights are missing or corrupt, Latch strictly aborts commits with exit code `1` and an actionable diagnostic banner.
   Why now: Completes the full developer loop (`git commit` intercepted at terminal) and verifies the critical non-negotiable architectural invariant: strict fail-closed behavior under all failure modes.
   PRD ref: `prd.md > Features and Behavior > 4. Strict Fail-Closed Error Enforcement`, `prd.md > Technical & Engine Strategies > Failure Modes & Fail-Closed Guarantees`

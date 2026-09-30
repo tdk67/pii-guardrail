@@ -165,15 +165,17 @@ To guarantee that a git commit never gets stuck waiting forever on a dead, unres
 - **Client (`src/latch/client.py`)**: 50ms fast HTTP probe; seamlessly routes to warm daemon for sub-50ms warm commits, with automatic fallback to in-process cold-start if the daemon is offline or times out.
 - **Lifecycle Scripts (`scripts/windows/`)**: `start-daemon.ps1`, `stop-daemon.ps1`, `status-daemon.ps1`.
 
+### Slice 4: One-Touch Git Hook Installation & Strict Fail-Closed Safeguard
+- **Hook Installer (`src/latch/hook.py`)**: Automatic discovery of `.git` root and installation of portable shell wrapper script into `.git/hooks/pre-commit` referencing the absolute Python interpreter path.
+- **Hook Safety & Backups**: Automatically creates `.git/hooks/pre-commit.latch.bak` when an existing hook is detected.
+- **Strict Fail-Closed Invariant (`tests/test_fail_closed.py`)**: Validates that missing weights, corrupt tensors, diff parse failures, or system crashes always abort the commit with exit code `1` and actionable diagnostic guidance.
+
 ---
 
 ## Todo List & Roadmap for Upcoming Slices
 
-- [ ] **Slice 4: One-Touch Git Hook Integration & Strict Fail-Closed Safeguard**
-  - Implement `latch install` in `cli.py` to automatically configure `.git/hooks/pre-commit` using the absolute virtualenv Python path.
-  - Add pre-flight checks and fail-closed tests (`tests/test_fail_closed.py`) to verify system behavior when model weights are missing or corrupt.
-
 - [ ] **Slice 5: Evaluation Benchmark & Prompt Injection Hardening Suite**
   - Build `tests/run_benchmark.py` and `latch benchmark` command.
   - Evaluate accuracy, false positive rate (FPR), false negative rate (FNR), and prompt injection resistance across benign, synthetic PII, and adversarial comment fixtures in `fixtures/`.
+
 

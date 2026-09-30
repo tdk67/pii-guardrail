@@ -14,6 +14,7 @@ from latch.daemon import DaemonManager
 from latch.diff_parser import DiffParser, DiffParserError
 from latch.dissection import Dissector
 from latch.engine import EvaluationResult, JuliaEngine, JuliaEngineError
+from latch.hook import HookInstallError, install_pre_commit_hook
 from latch.presenter import Presenter
 
 
@@ -130,6 +131,33 @@ def download_model(config: Optional[LatchConfig] = None) -> int:
         return 1
 
 
+def run_install(repo_root: Optional[str] = None, presenter: Optional[Presenter] = None) -> int:
+    """Install Latch as a git pre-commit hook."""
+    pres = presenter or Presenter()
+    try:
+        hook_path = install_pre_commit_hook(repo_root=repo_root)
+        print("[OK] Latch pre-commit hook successfully installed at:")
+        print(f"     {hook_path}")
+        print(f"     Executable interpreter: {sys.executable}")
+        return 0
+    except HookInstallError as err:
+        err_msg = pres.format_error(
+            title="Hook Installation Failed",
+            error_detail=str(err),
+            action="Initialize a git repository ('git init') or run from within your git workspace.",
+        )
+        print(err_msg, file=sys.stderr)
+        return 1
+    except Exception as err:
+        err_msg = pres.format_error(
+            title="Hook Installation Error",
+            error_detail=str(err),
+            action="Check write permissions for .git/hooks directory.",
+        )
+        print(err_msg, file=sys.stderr)
+        return 1
+
+
 def main(args: Optional[list[str]] = None) -> None:
     """CLI argument entry point."""
     parser = argparse.ArgumentParser(
@@ -163,8 +191,8 @@ def main(args: Optional[list[str]] = None) -> None:
         exit_code = download_model()
         sys.exit(exit_code)
     elif parsed.command == "install":
-        print("Hook installer will be completed in Slice 4.")
-        sys.exit(0)
+        exit_code = run_install()
+        sys.exit(exit_code)
     elif parsed.command == "daemon":
         mgr = DaemonManager()
         if parsed.action == "start":
