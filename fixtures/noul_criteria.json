@@ -1,0 +1,14 @@
+{
+  "question": "Does this code diff contain leaked sensitive PII (names with phone/SSN/address) or secret credentials (API keys, private tokens, passwords)?",
+  "criteria": {
+    "positive_indicators": [
+      "Real unmasked personal names combined with telephone numbers, residential addresses, or government IDs",
+      "Live API keys, JWT bearer tokens with signatures, private cryptographic keys, database passwords in plaintext"
+    ],
+    "negative_indicators": [
+      "Standard programming variable names, class names, function declarations, imports",
+      "Explicit mock test files, synthetic non-routable dummy data (e.g. 555-0199, test@example.com)",
+      "Configuration schemas, comments without real personal credentials"
+    ]
+  }
+}

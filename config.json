@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "config_version": "1.0",
+  "model": "SupersonicLabs/Julia-1",
+  "model_path": "./models/julia-1",
+  "model_max_context_tokens": 8192,
+  "pii_threshold": 0.65,
+  "max_chunk_tokens": 750,
+  "max_dissection_depth": 15,
+  "localization_window_lines": 25,
+  "daemon_port": 5138,
+  "daemon_probe_timeout_ms": 50,
+  "noul_state_template_path": "./templates/noul_state.txt",
+  "noul_criteria_path": "./fixtures/noul_criteria.json",
+  "benchmark_fixtures_dir": "./fixtures/"
+}
