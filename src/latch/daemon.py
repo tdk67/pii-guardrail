@@ -401,6 +401,12 @@ def run_daemon_process() -> None:
     try:
         server = DaemonServer(cfg)
         server.engine.load()
+        # Warm-up inference: pay one-time lazy torch/tokenizer init costs now so the
+        # first real request does not exceed the client evaluation timeout (VPS finding).
+        try:
+            server.engine.evaluate("=== File: warmup ===\n+ warmup = True", request_id="warmup")
+        except Exception as warmup_err:
+            print(f"[DAEMON WARN] Warm-up inference failed: {warmup_err}")
         print(f"[DAEMON READY] Warm on 127.0.0.1:{cfg.daemon_port}")
         server.serve_forever()
     except KeyboardInterrupt:

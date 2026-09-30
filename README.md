@@ -160,9 +160,9 @@ To guarantee that a git commit never gets stuck waiting forever on a dead, unres
 - **Dissection Engine (`src/latch/dissection.py`)**: Divide-and-conquer binary search that recursively bisects multi-file staged diffs down to the exact offending file and $\le 25$-line context window.
 - **Conservative Split Fallback**: Handles edge-case PII spanning split boundaries by conservatively evaluating the full candidate block if both halves test clean.
 
-### Slice 3: Sub-50ms Warm IPC Daemon & Two-Tier Fallback
-- **Daemon (`src/latch/daemon.py`)**: Background `ThreadingHTTPServer` bound to `127.0.0.1:5138` with `/v1/health`, `/v1/evaluate`, and `/v1/shutdown`. Pre-warms weights on startup.
-- **Client (`src/latch/client.py`)**: 50ms fast HTTP probe; seamlessly routes to warm daemon for sub-50ms warm commits, with automatic fallback to in-process cold-start if the daemon is offline or times out.
+### Slice 3: Sub-Second Warm IPC Daemon & Two-Tier Fallback
+- **Daemon (`src/latch/daemon.py`)**: Background `ThreadingHTTPServer` bound to `127.0.0.1:5138` with `/v1/health`, `/v1/evaluate`, and `/v1/shutdown`. Pre-warms weights and runs a warm-up inference on startup.
+- **Client (`src/latch/client.py`)**: 50ms fast HTTP probe; seamlessly routes to warm daemon for sub-second warm commits (~300ms per evaluation, of which ~12ms is loopback IPC overhead; see `docs/BENCHMARK_REPORT.md`), with automatic fallback to in-process cold-start if the daemon is offline or times out.
 - **Lifecycle Scripts (`scripts/windows/`)**: `start-daemon.ps1`, `stop-daemon.ps1`, `status-daemon.ps1`.
 
 ### Slice 4: One-Touch Git Hook Installation & Strict Fail-Closed Safeguard
