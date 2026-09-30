@@ -137,8 +137,8 @@ class JuliaEngine:
     def _load_criteria(self) -> Dict[str, str]:
         """Loads criteria definitions mapping 'false' and 'true' keys."""
         return {
-            "false": "Clean source code, standard identifiers, benign mock test fixtures, or public comments",
-            "true": "Unencrypted personal data, phone numbers, personal records, passwords, or secret API keys",
+            "false": "Standard programming source code, functions, classes, imports, configuration schemas, or benign public comments.",
+            "true": "Leaked personal data, unmasked full names with phone numbers or home addresses, government SSNs, plaintext passwords, or private API keys.",
         }
 
     @staticmethod

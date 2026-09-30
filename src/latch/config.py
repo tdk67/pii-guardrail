@@ -23,7 +23,7 @@ class LatchConfig:
     model: str = "SupersonicLabs/Julia-1"
     model_path: str = "./models/julia-1"
     model_max_context_tokens: int = 8192
-    pii_threshold: float = 0.65
+    pii_threshold: float = 0.35
     max_chunk_tokens: int = 750
     max_dissection_depth: int = 15
     localization_window_lines: int = 25

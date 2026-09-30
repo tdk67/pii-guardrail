@@ -158,6 +158,17 @@ def run_install(repo_root: Optional[str] = None, presenter: Optional[Presenter] 
         return 1
 
 
+def run_benchmark(config: Optional[LatchConfig] = None) -> int:
+    """Run benchmark evaluation suite across test fixtures."""
+    cfg = config or get_config()
+    from latch.benchmark import BenchmarkRunner
+    print("Executing Latch Benchmark Evaluation Suite...")
+    runner = BenchmarkRunner(config=cfg)
+    report = runner.run()
+    print("\n" + report.formatted_summary())
+    return 0 if report.metrics.fnr == 0.0 else 1
+
+
 def main(args: Optional[list[str]] = None) -> None:
     """CLI argument entry point."""
     parser = argparse.ArgumentParser(
@@ -205,8 +216,8 @@ def main(args: Optional[list[str]] = None) -> None:
             mgr.status()
             sys.exit(0)
     elif parsed.command == "benchmark":
-        print("Benchmark suite will be completed in Slice 5.")
-        sys.exit(0)
+        exit_code = run_benchmark()
+        sys.exit(exit_code)
     else:
         parser.print_help()
         sys.exit(1)

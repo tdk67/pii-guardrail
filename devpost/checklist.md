@@ -49,7 +49,7 @@ Build mode: learn mode (TDD: write test first for every slice; full accuracy eva
   Learner check: Run `python -m latch.cli install`, then run a real `git commit` on staged clean and PII files to experience the automated hook interception.
   Commit: `Add pre-commit hook installer and strict fail-closed enforcement`
 
-- [ ] **5. Evaluation Benchmark and Prompt Injection Hardening Suite**
+- [x] **5. Evaluation Benchmark and Prompt Injection Hardening Suite**
   Becomes usable: Running `python -m latch.cli benchmark` executes an automated test suite across clean, synthetic PII, and adversarial prompt-injection fixtures in `fixtures/`, outputting a benchmark report with Accuracy, False Negative Rate (FNR), False Positive Rate (FPR), Injection Resilience, and latency metrics with hardware baseline.
   Why now: Validates the model's decision quality, confirms injection resilience, and provides the quantitative metrics required for project verification and documentation.
   PRD ref: `prd.md > Features and Behavior > 3. Prompt Injection Defense & Data Isolation`, `prd.md > Features and Behavior > 5. Benchmark & Evaluation Suite`
