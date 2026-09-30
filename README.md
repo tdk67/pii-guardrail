@@ -105,8 +105,17 @@ python -m latch.cli check
 Latch uses a test-driven development (TDD) workflow with full unit and live inference tests:
 
 ```bash
+# 1. Fast unit tests (~0.2s - excludes 550MB model cold start)
+pytest -m "not slow" -v
+
+# 2. Live model inference test (shows probabilities and latency via -s)
+pytest -m slow -s -v
+
+# 3. Run all tests together
 pytest -v
 ```
+
+> **Tip for displaying live test printouts**: Pass `-s` (or `--capture=no`) to `pytest` to prevent output capture and show live `print()` logs, such as model inference probabilities and execution times.
 
 ---
 

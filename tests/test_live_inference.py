@@ -3,6 +3,7 @@ from latch.config import get_config
 from latch.engine import JuliaEngine
 
 
+@pytest.mark.slow
 def test_live_julia_engine_inference():
     cfg = get_config()
     engine = JuliaEngine(cfg)
