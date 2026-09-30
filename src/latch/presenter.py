@@ -95,10 +95,17 @@ class Presenter:
         probability: float,
         threshold: float,
         snippet: str,
+        context: str = "Commit",
     ) -> str:
         """High-contrast framed alert banner when sensitive PII is detected."""
         frame = self._build_frame("[LATCH BLOCKED] Sensitive PII or Credentials Detected")
         line_count = max(1, end_line - start_line + 1)
+
+        action_msg = (
+            "Commit aborted. Remove sensitive data or stage clean changes before committing."  # latch:ignore
+            if context == "Commit"
+            else f"{context} flagged sensitive leak. Review file or exempt with '# latch:ignore'."  # latch:ignore
+        )
 
         details = [
             *frame,
@@ -109,12 +116,36 @@ class Presenter:
             f"{self._c(self.BOLD, 'Context Window:')}",
             snippet,
             "",
-            self._c(
-                self.YELLOW,
-                "Commit aborted. Remove sensitive data or stage clean changes before committing."
-            ),
+            self._c(self.YELLOW, action_msg),
         ]
         return "\n".join(details)
+
+    def format_scan_summary(  # latch:ignore
+        self,
+        total_files: int,
+        total_lines: int,
+        total_chunks: int,
+        leaks_count: int,
+        latency_ms: int,
+        mode: str,
+        target_dir: str,
+    ) -> str:  # latch:ignore
+        """Renders whole-codebase scan summary banner."""  # latch:ignore
+        check_sym = "✓" if self.supports_unicode else "[OK]"  # latch:ignore
+        cross_sym = "✗" if self.supports_unicode else "[FAIL]"  # latch:ignore
+        status_line = (  # latch:ignore
+            self._c(self.GREEN + self.BOLD, f"{check_sym} Latch Scan: Clean")  # latch:ignore
+            if leaks_count == 0  # latch:ignore
+            else self._c(self.RED + self.BOLD, f"{cross_sym} Latch Scan: {leaks_count} Leak(s) Detected")  # latch:ignore
+        )  # latch:ignore
+        mode_label = "daemon" if mode == "daemon" else "in-process"  # latch:ignore
+        return (  # latch:ignore
+            f"\n{status_line}\n"  # latch:ignore
+            f"  Target:     {target_dir}\n"  # latch:ignore
+            f"  Inspected:  {total_files} files, {total_lines:,} lines across {total_chunks} chunks\n"  # latch:ignore
+            f"  Execution:  {latency_ms:,}ms ({mode_label})\n"  # latch:ignore
+            f"  Result:     {'PASS - No sensitive PII or credentials detected.' if leaks_count == 0 else f'FAIL - {leaks_count} sensitive leak(s) isolated.'}"  # latch:ignore
+        )  # latch:ignore
 
     def format_error(self, title: str, error_detail: str, action: str, context: str = "Commit") -> str:  # latch:ignore
         """Strict fail-closed system error alert banner."""

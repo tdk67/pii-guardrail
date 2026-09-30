@@ -158,6 +158,8 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
 
 class DaemonServer(ThreadingHTTPServer):
     """Threading HTTP server instance hosting the warm Julia-1 engine with authentication."""
+    daemon_threads = True
+    allow_reuse_address = True
 
     def __init__(
         self,

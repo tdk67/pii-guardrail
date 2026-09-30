@@ -20,6 +20,9 @@ class DiffParserError(Exception):
     pass
 
 
+LATCH_IGNORE_PRAGMA = "latch:ignore"
+
+
 def estimate_line_tokens(content: str) -> int:
     """Canonical token estimation for a diff line (approx 4 chars/token + 2 formatting overhead)."""
     return max(1, len(content) // 4) + 2
@@ -214,7 +217,7 @@ class DiffParser:
                 content = line[1:]  # Strip leading +
 
                 # Inline pragma: skip line if explicitly marked with latch:ignore
-                if "latch:ignore" in content:
+                if LATCH_IGNORE_PRAGMA in content:
                     self.last_stats.exempted_pragma_lines += 1
                     current_target_line += 1
                     continue

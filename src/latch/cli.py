@@ -25,6 +25,7 @@ def run_check(
     parser: Optional[DiffParser] = None,
     engine: Optional[JuliaEngine] = None,
     presenter: Optional[Presenter] = None,
+    client: Optional[Client] = None,
 ) -> int:
     """Core pre-commit check command. Returns exit code (0 = clean, 1 = blocked/error)."""
     cfg = config or get_config()
@@ -66,14 +67,21 @@ def run_check(
             return 0
 
         # Two-tier runner: routes to warm daemon (sub-50ms) or falls back in-process
-        client = Client(cfg, in_process_engine=engine)
+        if client is not None:
+            active_client = client
+        elif engine is not None:
+            # Caller passed explicit engine (e.g. test mock); bypass external daemon
+            active_client = Client(cfg, in_process_engine=engine, prefer_daemon=False)
+        else:
+            active_client = Client(cfg)
+
         state_builder = StateBuilder(config=cfg)
         total_latency_ms = 0
 
         # Evaluate each batch
         for batch in batches:
             prompt_state = state_builder.build(batch.formatted_text())
-            eval_result = client.evaluate(prompt_state, request_id=batch.batch_id)
+            eval_result = active_client.evaluate(prompt_state, request_id=batch.batch_id)
             total_latency_ms += eval_result.latency_ms
 
             if eval_result.error is not None:
@@ -94,25 +102,26 @@ def run_check(
                 )
                 dissect_res = dissector.dissect(
                     batch,
-                    evaluate_fn=lambda txt: client.evaluate(state_builder.build(txt), request_id=batch.batch_id),
+                    evaluate_fn=lambda txt: active_client.evaluate(state_builder.build(txt), request_id=batch.batch_id),
                     initial_probability=eval_result.probability,
                 )
 
-                alert = pres.format_blocked(
-                    file_path=dissect_res.offending_file,
-                    start_line=dissect_res.start_line,
-                    end_line=dissect_res.end_line,
-                    probability=dissect_res.probability,
-                    threshold=cfg.pii_threshold,
-                    snippet=dissect_res.snippet,
-                )
-                print(alert, file=sys.stderr)
-                return 1
+                if dissect_res.probability >= cfg.pii_threshold:
+                    alert = pres.format_blocked(
+                        file_path=dissect_res.offending_file,
+                        start_line=dissect_res.start_line,
+                        end_line=dissect_res.end_line,
+                        probability=dissect_res.probability,
+                        threshold=cfg.pii_threshold,
+                        snippet=dissect_res.snippet,
+                    )
+                    print(alert, file=sys.stderr)
+                    return 1
 
         # All batches approved
         clean_msg = pres.format_clean(
             latency_ms=total_latency_ms,
-            mode=client.last_mode,
+            mode=active_client.last_mode,
             exempted_allowlist=stats.exempted_allowlist_lines,
             exempted_pragma=stats.exempted_pragma_lines,
         )
@@ -250,6 +259,84 @@ def run_benchmark(config: Optional[LatchConfig] = None) -> int:
         return 1
 
 
+def run_scan(
+    path: str = ".",
+    threshold: Optional[float] = None,
+    ext: Optional[str] = None,
+    max_chunk_tokens: Optional[int] = None,
+    config: Optional[LatchConfig] = None,
+    client: Optional[Any] = None,
+    scanner: Optional[Any] = None,
+) -> int:
+    """Scan an entire codebase directory for PII and leaked credentials."""
+    cfg = config or get_config()
+    pres = Presenter()
+    extensions = [e.strip() if e.strip().startswith(".") else f".{e.strip()}" for e in ext.split(",")] if ext else None
+
+    target_abs = os.path.abspath(path)
+    print(f"Scanning codebase at '{target_abs}' with Julia-1...")
+    try:
+        from latch.scanner import Scanner
+        scan_engine = scanner or Scanner(config=cfg, client=client)
+
+        def on_progress(curr: int, tot: int) -> None:
+            if sys.stdout.isatty():
+                print(f"\r  Evaluating chunk {curr}/{tot}...", end="", flush=True)
+
+        report = scan_engine.scan(
+            target_dir=path,
+            extensions=extensions,
+            threshold=threshold,
+            max_chunk_tokens=max_chunk_tokens,
+            progress_callback=on_progress,
+        )
+
+        if sys.stdout.isatty() and report.total_chunks > 0:
+            print("\r" + " " * 40 + "\r", end="")
+
+        for leak in report.leaks:
+            alert = pres.format_blocked(  # latch:ignore
+                file_path=leak.offending_file,
+                start_line=leak.start_line,
+                end_line=leak.end_line,
+                probability=leak.probability,
+                threshold=threshold or cfg.pii_threshold,
+                snippet=leak.snippet,
+                context="Scan",
+            )
+            print(alert, file=sys.stderr)
+
+        summary = pres.format_scan_summary(
+            total_files=report.total_files,
+            total_lines=report.total_lines,
+            total_chunks=report.total_chunks,
+            leaks_count=len(report.leaks),
+            latency_ms=report.total_latency_ms,
+            mode=report.mode,
+            target_dir=report.target_dir,
+        )
+        print(summary)
+        return 0 if report.is_clean else 1
+    except JuliaEngineError as err:
+        err_msg = pres.format_error(  # latch:ignore
+            title="Scan Failed - Model Engine Unavailable",
+            error_detail=str(err),
+            action="Run 'python -m latch.cli download-model' or ensure 'julia' runtime is installed.",
+            context="Scan",
+        )
+        print(err_msg, file=sys.stderr)
+        return 1
+    except Exception as err:
+        err_msg = pres.format_error(  # latch:ignore
+            title="Scan Failed - Unexpected Error",
+            error_detail=str(err),
+            action="Check target path and directory permissions.",
+            context="Scan",
+        )
+        print(err_msg, file=sys.stderr)
+        return 1
+
+
 def main(args: Optional[list[str]] = None) -> None:
     """CLI argument entry point."""
     parser = argparse.ArgumentParser(
@@ -260,6 +347,13 @@ def main(args: Optional[list[str]] = None) -> None:
 
     # Command: check
     subparsers.add_parser("check", help="Inspect staged changes for PII and leaked credentials")
+
+    # Command: scan
+    scan_parser = subparsers.add_parser("scan", help="Scan an entire codebase directory for PII and leaked credentials")
+    scan_parser.add_argument("path", nargs="?", default=".", help="Target directory to scan (default: current directory)")
+    scan_parser.add_argument("--threshold", type=float, default=None, help="Custom PII threshold (default from config: 0.65)")
+    scan_parser.add_argument("--ext", type=str, default=None, help="Comma-separated file extensions to include (e.g. .py,.ts,.js,.json)")
+    scan_parser.add_argument("--max-chunk-tokens", type=int, default=None, help="Maximum tokens per chunk (default from config: 750)")
 
     # Command: download-model
     subparsers.add_parser("download-model", help="Download open Julia-1 model weights from Hugging Face")
@@ -281,6 +375,14 @@ def main(args: Optional[list[str]] = None) -> None:
 
     if parsed.command == "check" or parsed.command is None:
         exit_code = run_check()
+        sys.exit(exit_code)
+    elif parsed.command == "scan":
+        exit_code = run_scan(
+            path=parsed.path,
+            threshold=parsed.threshold,
+            ext=parsed.ext,
+            max_chunk_tokens=parsed.max_chunk_tokens,
+        )
         sys.exit(exit_code)
     elif parsed.command == "download-model":
         exit_code = download_model()

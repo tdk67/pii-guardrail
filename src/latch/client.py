@@ -26,10 +26,12 @@ class Client:
         config: Optional[LatchConfig] = None,
         in_process_engine: Optional[JuliaEngine] = None,
         token_file: Optional[str] = None,
+        prefer_daemon: bool = True,
     ) -> None:
         self.config = config or get_config()
         self._in_process_engine = in_process_engine
         self.token_file = token_file or resolve_token_file()
+        self.prefer_daemon = prefer_daemon
         self.last_mode: str = "in_process"
         self.last_daemon_error: Optional[str] = None
 
@@ -50,6 +52,8 @@ class Client:
 
     def is_daemon_alive(self) -> bool:
         """Fast HTTP probe to check if the daemon is warm, listening, and mutually authenticated."""
+        if not self.prefer_daemon:
+            return False
         return probe_daemon(
             port=self.config.daemon_port,
             token=self._get_daemon_token(),  # latch:ignore

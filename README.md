@@ -100,6 +100,44 @@ python -m latch.cli check
   Commit aborted. Remove sensitive data or stage clean changes before committing.
   ```
 
+### Whole-Codebase Scanning (`latch scan`)
+
+Audit an entire project or directory tree rather than just staged git changes:
+
+```bash
+# Scan current repository or project directory
+python -m latch.cli scan .
+
+# Scan specific directory with custom extensions and threshold
+python -m latch.cli scan ./src --ext .py,.ts,.json --threshold 0.70
+
+# Customize batch chunk size (default: 750 tokens)
+python -m latch.cli scan ./backend --max-chunk-tokens 1000
+```
+
+- **Automatic Noise Pruning**: Silently skips `.git`, `.venv`, `node_modules`, `__pycache__`, `models/julia-1`, and binary files.
+- **Adaptive Dissection**: Localizes findings down to the exact file and line range using binary search.
+- **Allowlist & Inline Pragmas**: Honors `allowlist_paths` from `config.json` and `# latch:ignore` inline comments.
+- **Warm Daemon Acceleration**: Runs in hundreds of milliseconds when the warm daemon is active.
+
+### Run Background Daemon for Sub-50ms Inference
+
+Start the local background daemon to avoid cold-starting PyTorch and Julia-1 model weights on every check or scan:
+
+```bash
+# Start daemon in background (Windows PowerShell)
+.\scripts\windows\start-daemon.ps1
+
+# Or start daemon directly
+python -m latch.daemon &
+
+# Check daemon health and status
+.\scripts\windows\status-daemon.ps1
+
+# Stop daemon cleanly
+.\scripts\windows\stop-daemon.ps1
+```
+
 ### Run the Test Suite
 
 Latch uses a test-driven development (TDD) workflow with full unit and live inference tests:
@@ -169,6 +207,12 @@ To guarantee that a git commit never gets stuck waiting forever on a dead, unres
 - **Hook Installer (`src/latch/hook.py`)**: Automatic discovery of `.git` root and installation of portable shell wrapper script into `.git/hooks/pre-commit` referencing the absolute Python interpreter path.
 - **Hook Safety & Backups**: Automatically creates `.git/hooks/pre-commit.latch.bak` when an existing hook is detected.
 - **Strict Fail-Closed Invariant (`tests/test_fail_closed.py`)**: Validates that missing weights, corrupt tensors, diff parse failures, or system crashes always abort the commit with exit code `1` and actionable diagnostic guidance.
+
+### Slice 5: Whole-Codebase Scanning Engine
+- **Scanner Engine (`src/latch/scanner.py`)**: Traverses directory trees to inspect source files outside git commits.
+- **Noise Filtration**: Prunes `.git`, `.venv`, `node_modules`, `__pycache__`, `models/julia-1`, and binary files.
+- **Chunk Packing & Dissection**: Groups files into token chunks, evaluates via daemon, and recursively bisects flagged ranges down to the exact file and lines.
+- **CLI Subcommand**: Exposes `latch scan [PATH]` with `--ext`, `--threshold`, and `--max-chunk-tokens` options.
 
 ---
 
@@ -245,7 +289,7 @@ Latch provides two flexible mechanisms to handle deliberate public disclosures (
 
 ## All Build Slices Completed & Verified
 
-All 5 core architectural slices defined in the technical specification and PRD are implemented, covered by 56 automated unit tests, and verified end-to-end with the live Julia-1 model:
+All 5 core architectural slices defined in the technical specification and PRD are implemented, covered by 62 automated unit tests, and verified end-to-end with the live Julia-1 model:
 - **FNR (False Negative Rate)**: **0.0%** (zero missed leaks across all credentials and personal records)
 - **Prompt Injection Resilience**: **100.0%** (all adversarial injection attempts successfully blocked)
 - **Accuracy**: **93.8%** across 16 adversarial, PII, and clean algorithm fixtures
