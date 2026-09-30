@@ -8,8 +8,9 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from typing import Optional
+from latch.client import Client
 from latch.config import ConfigError, LatchConfig, get_config
+from latch.daemon import DaemonManager
 from latch.diff_parser import DiffParser, DiffParserError
 from latch.dissection import Dissector
 from latch.engine import EvaluationResult, JuliaEngine, JuliaEngineError
@@ -39,12 +40,13 @@ def run_check(
         if not batches:
             return 0
 
-        eng = engine or JuliaEngine(cfg)
+        # Two-tier runner: routes to warm daemon (sub-50ms) or falls back in-process
+        client = Client(cfg, in_process_engine=engine)
 
         # Evaluate each batch
         for batch in batches:
             state_text = batch.formatted_text()
-            eval_result = eng.evaluate(state_text, request_id=batch.batch_id)
+            eval_result = client.evaluate(state_text, request_id=batch.batch_id)
 
             if not eval_result.is_clean(cfg.pii_threshold):
                 # PII or credentials detected: run binary dissection localization
@@ -55,7 +57,7 @@ def run_check(
                 )
                 dissect_res = dissector.dissect(
                     batch,
-                    evaluate_fn=lambda txt: eng.evaluate(txt, request_id=batch.batch_id),
+                    evaluate_fn=lambda txt: client.evaluate(txt, request_id=batch.batch_id),
                 )
 
                 alert = pres.format_blocked(
@@ -164,8 +166,16 @@ def main(args: Optional[list[str]] = None) -> None:
         print("Hook installer will be completed in Slice 4.")
         sys.exit(0)
     elif parsed.command == "daemon":
-        print(f"Daemon management ({parsed.action}) will be completed in Slice 3.")
-        sys.exit(0)
+        mgr = DaemonManager()
+        if parsed.action == "start":
+            success = mgr.start_background()
+            sys.exit(0 if success else 1)
+        elif parsed.action == "stop":
+            mgr.stop()
+            sys.exit(0)
+        elif parsed.action == "status":
+            mgr.status()
+            sys.exit(0)
     elif parsed.command == "benchmark":
         print("Benchmark suite will be completed in Slice 5.")
         sys.exit(0)

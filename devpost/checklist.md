@@ -29,7 +29,7 @@ Build mode: learn mode (TDD: write test first for every slice; full accuracy eva
   Learner check: Stage a multi-file diff containing one sensitive line among clean files, run `latch check`, and verify the terminal pinpoint banner flags the exact file and lines 42-56.
   Commit: `Implement adaptive batching and binary dissection localization`
 
-- [ ] **3. Sub-50ms Warm IPC Daemon and Two-Tier Fallback**
+- [x] **3. Sub-50ms Warm IPC Daemon and Two-Tier Fallback**
   Becomes usable: Developers can run `python -m latch.cli daemon start` to keep Julia-1 loaded warm in memory. `latch check` automatically probes `127.0.0.1:5138` and verifies clean commits in under 50ms, while seamlessly falling back to in-process cold-start if the daemon is stopped.
   Why now: Solves the developer flow latency challenge (sub-50ms warm execution on standard CPU) while ensuring reliability through the automatic cold-start fallback.
   PRD ref: `prd.md > Technical & Engine Strategies > Julia-1 Engine Interface Contract`, `prd.md > Why We Win`
