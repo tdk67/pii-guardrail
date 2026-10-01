@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
@@ -49,11 +50,58 @@ def is_binary_file(file_path: Path) -> bool:
         return True
 
 
+# Regex patterns for masking sensitive tokens within code snippets
+_CREDENTIAL_ASSIGNMENT_PATTERN = re.compile(  # latch:ignore
+    r'([\"\'`]?(?:key|token|secret|password|passwd|auth|bearer|cred|api|private|cert|cookie|session)[a-zA-Z0-9_\-]*[\"\'`]?\s*[:=]\s*[\"\'`]?)([^\"\'`\s,;<>]{7,})([\"\'`]?)',  # latch:ignore
+    re.IGNORECASE,  # latch:ignore
+)  # latch:ignore
+_AUTH_HEADER_PATTERN = re.compile(  # latch:ignore
+    r'((?:Bearer|Basic|Token)\s+)([A-Za-z0-9_\-\.\=\+]{10,})',  # latch:ignore
+    re.IGNORECASE,  # latch:ignore
+)  # latch:ignore
+_HIGH_ENTROPY_TOKEN_PATTERN = re.compile(  # latch:ignore
+    r'\b(AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36}|ey[A-Za-z0-9_\-]{15,}\.[A-Za-z0-9_\-]{10,}|[A-Fa-f0-9]{32,}|[A-Za-z0-9_\-]{28,})\b'  # latch:ignore
+)  # latch:ignore
+
+
 def redact_snippet(s: str) -> str:
-    """Mask snippet content to avoid persisting raw credentials/PII to disk."""
-    if not s or len(s) <= 8:
-        return s
-    return s[:4] + "…" + s[-4:]
+    """Mask sensitive credential literals within snippet lines without collapsing code structure."""
+    if not s:
+        return ""
+
+    def _mask_token(val: str) -> str:
+        if len(val) <= 6:
+            return val
+        return val[:3] + "…" + val[-3:]
+
+    lines = []
+    for line in s.splitlines():
+        if line.startswith("--- File:") or line.startswith("     ..."):
+            lines.append(line)
+            continue
+        prefix = ""
+        code = line
+        if " | " in line:
+            parts = line.split(" | ", 1)
+            if parts[0].strip().isdigit():
+                prefix = parts[0] + " | "
+                code = parts[1]
+
+        code = _CREDENTIAL_ASSIGNMENT_PATTERN.sub(  # latch:ignore
+            lambda m: f"{m.group(1)}{_mask_token(m.group(2))}{m.group(3)}", code  # latch:ignore
+        )  # latch:ignore
+        code = _AUTH_HEADER_PATTERN.sub(  # latch:ignore
+            lambda m: f"{m.group(1)}{_mask_token(m.group(2))}", code  # latch:ignore
+        )  # latch:ignore
+        code = _HIGH_ENTROPY_TOKEN_PATTERN.sub(  # latch:ignore
+            lambda m: _mask_token(m.group(1)), code  # latch:ignore
+        )  # latch:ignore
+        lines.append(prefix + code)  # latch:ignore
+
+    res = "\n".join(lines)
+    if res == s and len(s) > 8 and "\n" not in s and " " not in s:
+        return _mask_token(s)
+    return res
 
 
 @dataclass
@@ -200,18 +248,24 @@ class ScanReport:
         suggested_json = ",\n".join(lines) if lines else '    "fixtures/*"'
 
         if template_text:
+            total_lines_formatted = f"{self.total_lines:,}"
+            total_latency_formatted = f"{self.total_latency_ms:,}"
+            latency_sec_formatted = f"{self.total_latency_ms / 1000.0:.2f}"
             placeholders = {
                 "{target_dir}": self.target_dir,
                 "{timestamp}": self.timestamp,
                 "{status}": status_banner,
-                "{total_files}": str(self.total_files),
-                "{total_lines}": f"{self.total_lines:,}",
-                "{total_chunks}": str(self.total_chunks),
-                "{leaks_count}": str(len(self.leaks)),
-                "{exempted_pragma_lines}": str(self.exempted_pragma_lines),
-                "{exempted_allowlist_files}": str(self.exempted_allowlist_files),
-                "{total_latency_ms}": f"{self.total_latency_ms:,}",
-                "{latency_sec}": f"{self.total_latency_ms / 1000.0:.2f}",
+                "{total_files}": f"{self.total_files:,}",
+                "{total_lines}": total_lines_formatted,
+                "{total_lines:,}": total_lines_formatted,
+                "{total_chunks}": f"{self.total_chunks:,}",
+                "{leaks_count}": f"{len(self.leaks):,}",
+                "{exempted_pragma_lines}": f"{self.exempted_pragma_lines:,}",
+                "{exempted_allowlist_files}": f"{self.exempted_allowlist_files:,}",
+                "{total_latency_ms}": total_latency_formatted,
+                "{total_latency_ms:,}": total_latency_formatted,
+                "{latency_sec}": latency_sec_formatted,
+                "{latency_sec:.2f}": latency_sec_formatted,
                 "{mode}": self.mode,
                 "{findings_section}": findings_section,
                 "{suggested_patterns_json}": suggested_json,

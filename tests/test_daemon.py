@@ -65,6 +65,7 @@ def test_daemon_metrics_and_stats_endpoints(test_server):
         text = resp.read().decode("utf-8")
     assert "latch_daemon_uptime_seconds" in text
     assert "latch_daemon_requests_total" in text
+    assert "latch_daemon_is_idle 1" in text
 
     # 3. JSON /v1/stats with query param token
     stats_url = f"http://127.0.0.1:{cfg.daemon_port}/v1/stats?token={server.token}"
@@ -73,6 +74,10 @@ def test_daemon_metrics_and_stats_endpoints(test_server):
         stats = json.loads(resp.read().decode("utf-8"))
     assert "uptime_seconds" in stats
     assert "total_requests" in stats
+    assert "is_idle" in stats
+    assert stats["is_idle"] is True
+    assert stats["status"] == "idle"
+    assert stats["throughput_reqs_per_sec"] == 0.0
 
     # 4. HTML /dashboard with query param token
     dash_url = f"http://127.0.0.1:{cfg.daemon_port}/dashboard?token={server.token}"
@@ -165,3 +170,45 @@ def test_daemon_pid_lifecycle(tmp_path):
     assert mgr.get_pid() == 12345
     mgr.remove_pid()
     assert mgr.get_pid() is None
+
+
+def test_metrics_tracker_idle_and_active_throughput():
+    from latch.metrics import DaemonMetricsTracker, PhaseTimings
+
+    tracker = DaemonMetricsTracker(window_size=100)
+    # 1. Fresh tracker with no requests: idle with 0 throughput
+    summary = tracker.get_summary(idle_timeout_sec=1.0)
+    assert summary["is_idle"] is True
+    assert summary["status"] == "idle"
+    assert summary["throughput_reqs_per_sec"] == 0.0
+    assert summary["throughput_tokens_per_sec"] == 0.0
+
+    # 2. In-flight request: active state
+    tracker.start_request()
+    summary = tracker.get_summary(idle_timeout_sec=1.0)
+    assert summary["is_idle"] is False
+    assert summary["status"] == "evaluating"
+    tracker.end_request()
+
+    # 3. Recorded recent request: active throughput measured
+    now = time.time()
+    tracker.record(PhaseTimings(
+        request_id="test-1",
+        tokens=500,
+        total_ms=1000.0,
+        timestamp=now,
+    ))
+    summary = tracker.get_summary(idle_timeout_sec=5.0)
+    assert summary["is_idle"] is False
+    assert summary["status"] == "evaluating"
+    assert summary["throughput_reqs_per_sec"] > 0.0
+    assert summary["throughput_tokens_per_sec"] > 0.0
+
+    # 4. Idle timeout expired: resets to idle and 0 throughput
+    tracker.last_activity_time = time.time() - 10.0
+    summary_idle = tracker.get_summary(idle_timeout_sec=1.0)
+    assert summary_idle["is_idle"] is True
+    assert summary_idle["status"] == "idle"
+    assert summary_idle["throughput_reqs_per_sec"] == 0.0
+    assert summary_idle["throughput_tokens_per_sec"] == 0.0
+

@@ -343,9 +343,10 @@ def run_scan(
             )
 
         # Save persistent scan reports (markdown and json)
+        saved_banner = ""
         try:
             md_path, json_path = report.save_reports(report_path)
-            print(pres.format_report_saved(str(md_path), str(json_path)))
+            saved_banner = pres.format_report_saved(str(md_path), str(json_path))
         except Exception as err:
             print(f"[WARN] Failed to save scan report: {err}", file=sys.stderr)
 
@@ -354,6 +355,10 @@ def run_scan(
             suggestions = report.get_suggested_allowlists()
             if suggestions:
                 print(pres.format_whitelist_suggestions(suggestions))
+
+        # Always print the saved report destination as the final output on display
+        if saved_banner:
+            print(saved_banner)
 
         return 0 if report.is_clean else 1
     except JuliaEngineError as err:

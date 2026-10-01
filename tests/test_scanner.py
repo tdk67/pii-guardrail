@@ -236,6 +236,13 @@ def test_scan_report_save_and_markdown(tmp_path: Path):
     # Raw secret must NOT be persisted in markdown
     assert "abc_secret_123" not in md_content
     assert "…" in md_content
+    # Code structure and line number must be preserved
+    assert " 10 | 'token': 'abc" in md_content
+    # Template placeholders must be completely resolved
+    assert "{total_lines" not in md_content
+    assert "{total_latency" not in md_content
+    assert "{latency_sec" not in md_content
+    assert "120" in md_content
 
     import json
     data = json.loads(json_path.read_text(encoding="utf-8"))
@@ -246,6 +253,30 @@ def test_scan_report_save_and_markdown(tmp_path: Path):
     persisted_snippet = data["findings"][0]["snippet"]
     assert "abc_secret_123" not in persisted_snippet
     assert "…" in persisted_snippet
+    assert " 10 | 'token': 'abc" in persisted_snippet
+
+
+def test_redact_snippet_preserves_multiline_code_structure():  # latch:ignore
+    from latch.scanner import redact_snippet  # latch:ignore
+
+    multiline = (  # latch:ignore
+        "  58 | def create_server():\n"  # latch:ignore
+        "  59 |     api_key = 'sk_live_1234567890abcdef'\n"  # latch:ignore
+        "  60 |     token: raw_secret_token_123456789\n"  # latch:ignore
+        "  61 |     return app\n"  # latch:ignore
+        "     ... (46 more lines in parent window)"  # latch:ignore
+    )  # latch:ignore
+    res = redact_snippet(multiline)  # latch:ignore
+    lines = res.splitlines()  # latch:ignore
+    assert len(lines) == 5  # latch:ignore
+    assert lines[0] == "  58 | def create_server():"  # latch:ignore
+    assert "sk_live_1234567890abcdef" not in lines[1]  # latch:ignore
+    assert "…" in lines[1]  # latch:ignore
+    assert lines[1].startswith("  59 |     api_key = 'sk_")  # latch:ignore
+    assert "raw_secret_token_123456789" not in lines[2]  # latch:ignore
+    assert "…" in lines[2]  # latch:ignore
+    assert lines[3] == "  61 |     return app"  # latch:ignore
+    assert lines[4] == "     ... (46 more lines in parent window)"  # latch:ignore
 
 
 def test_scan_report_whitelist_suggestions():

@@ -35,11 +35,42 @@
     .header-title h1 { font-size: 24px; color: #fff; display: flex; align-items: center; gap: 10px; }
     .status-badge {
       font-size: 13px;
-      padding: 4px 10px;
+      padding: 4px 12px;
       border-radius: 12px;
+      background: rgba(139, 148, 158, 0.15);
+      color: var(--text-muted);
+      font-weight: 600;
+      border: 1px solid #30363d;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.3s ease;
+    }
+    .status-badge.active {
       background: rgba(46, 160, 67, 0.2);
       color: var(--green);
-      font-weight: 600;
+      border-color: rgba(46, 160, 67, 0.5);
+    }
+    .status-badge.idle {
+      background: rgba(139, 148, 158, 0.15);
+      color: #8b949e;
+      border-color: #30363d;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #8b949e;
+    }
+    .status-badge.active .status-dot {
+      background: var(--green);
+      box-shadow: 0 0 8px rgba(46, 160, 67, 0.8);
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0% { transform: scale(0.95); opacity: 0.8; }
+      50% { transform: scale(1.2); opacity: 1; }
+      100% { transform: scale(0.95); opacity: 0.8; }
     }
     .grid {
       display: grid;
@@ -84,10 +115,13 @@
   <header>
     <div class="header-title">
       <h1>🛡️ Latch Daemon Live Profiler</h1>
-      <span class="status-badge" id="daemon-status">ONLINE (127.0.0.1:5138)</span>
+      <span class="status-badge idle" id="daemon-status">
+        <span class="status-dot"></span>
+        <span id="daemon-status-text">ONLINE • IDLE</span>
+      </span>
     </div>
     <div style="font-size: 13px; color: var(--text-muted);">
-      Auto-refreshing every 2s | <a href="/metrics" target="_blank" style="color: var(--accent); text-decoration: none;">Prometheus /metrics</a>
+      Auto-refreshing every 2s | <a id="metrics-link" href="/metrics" target="_blank" style="color: var(--accent); text-decoration: none;">Prometheus /metrics</a>
     </div>
   </header>
 
@@ -181,16 +215,42 @@
 
     async function updateStats() {
       try {
+        // Wire authentication token to Prometheus metrics link if available
+        const metricsLink = document.getElementById('metrics-link');
+        if (metricsLink && authToken) {
+          metricsLink.href = `/metrics?token=${encodeURIComponent(authToken)}`;
+        }
+
         const statsUrl = authToken ? `/v1/stats?token=${encodeURIComponent(authToken)}` : '/v1/stats';
         const headers = authToken ? { 'X-Latch-Token': authToken } : {};
         const res = await fetch(statsUrl, { headers });
         if (!res.ok) return;
         const data = await res.json();
+
+        // Update status badge: Online • Evaluating vs Online • Idle
+        const statusBadge = document.getElementById('daemon-status');
+        const statusText = document.getElementById('daemon-status-text');
+        if (statusBadge && statusText) {
+          if (data.is_idle) {
+            statusBadge.className = 'status-badge idle';
+            statusText.innerText = 'ONLINE • IDLE';
+          } else {
+            statusBadge.className = 'status-badge active';
+            statusText.innerText = 'ONLINE • EVALUATING';
+          }
+        }
         
         document.getElementById('val-requests').innerText = data.total_requests.toLocaleString();
         document.getElementById('val-tokens').innerText = data.total_tokens.toLocaleString();
-        document.getElementById('val-req-rate').innerText = data.throughput_reqs_per_sec;
-        document.getElementById('val-token-rate').innerText = data.throughput_tokens_per_sec;
+
+        // Throughput: Show 0.0 (Idle) when not actively processing, active rate when running
+        if (data.is_idle) {
+          document.getElementById('val-req-rate').innerHTML = '0.0 <span class="card-unit">(Idle)</span>';
+          document.getElementById('val-token-rate').innerHTML = '0.0 <span class="card-unit">(Idle)</span>';
+        } else {
+          document.getElementById('val-req-rate').innerHTML = `${data.throughput_reqs_per_sec} <span class="card-unit">req/s</span>`;
+          document.getElementById('val-token-rate').innerHTML = `${Number(data.throughput_tokens_per_sec).toLocaleString()} <span class="card-unit">tok/s</span>`;
+        }
 
         const phases = data.phases;
         if (phases && phases.total_ms) {

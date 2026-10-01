@@ -5,6 +5,7 @@ from latch.prompt import StateBuilder
 
 
 @pytest.mark.slow
+@pytest.mark.integration
 def test_live_julia_engine_inference():
     cfg = get_config()
     engine = JuliaEngine(cfg)

@@ -221,6 +221,9 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
         t_read_ms = (time.perf_counter() - t_read_start) * 1000
 
         if self.path == "/v1/evaluate":
+            metrics_tracker = getattr(self.server, "metrics_tracker", None)
+            if metrics_tracker:
+                metrics_tracker.start_request()
             try:
                 data = json.loads(body.decode("utf-8"))
                 state = data.get("state", "")
@@ -245,7 +248,6 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(resp_bytes)
                 t_write_ms = (time.perf_counter() - t_write_start) * 1000
 
-                metrics_tracker = getattr(self.server, "metrics_tracker", None)
                 if metrics_tracker:
                     timings = getattr(result, "timings", {})
                     metrics_tracker.record(PhaseTimings(
@@ -274,6 +276,9 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(resp_bytes)))
                 self.end_headers()
                 self.wfile.write(resp_bytes)
+            finally:
+                if metrics_tracker:
+                    metrics_tracker.end_request()
 
         elif self.path == "/v1/shutdown":
             body = json.dumps({"status": "shutting_down"}).encode("utf-8")

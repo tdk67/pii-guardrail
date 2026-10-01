@@ -11,12 +11,12 @@
 | Metric | Value |
 | :--- | :--- |
 | **Files Inspected** | {total_files} |
-| **Total Lines Scanned** | {total_lines:,} |
+| **Total Lines Scanned** | {total_lines} |
 | **Context Chunks Evaluated** | {total_chunks} |
 | **Sensitive Findings** | **{leaks_count}** |
 | **Pragma Exemptions (`# latch:ignore`)** | {exempted_pragma_lines} |
 | **Allowlisted File Exemptions** | {exempted_allowlist_files} |
-| **Total Scan Latency** | {total_latency_ms:,} ms ({latency_sec:.2f}s) |
+| **Total Scan Latency** | {total_latency_ms} ms ({latency_sec}s) |
 | **Inference Mode** | `{mode}` |
 
 ---

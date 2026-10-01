@@ -261,19 +261,21 @@ To set up visual monitoring with Prometheus and Grafana:
 
 ### Run the Test Suite
 
-Latch uses a test-driven development (TDD) workflow with full unit and live inference tests:
+Latch separates fast unit tests from live model inference integration tests:
 
 ```bash
-# 1. Fast unit tests (~0.2s - excludes 550MB model cold start)
-pytest -m "not slow" -v
-
-# 2. Live model inference test (shows probabilities and latency via -s)
-pytest -m slow -s -v
-
-# 3. Run all tests together
+# 1. Default test run (runs all unit tests in ~5s; skips heavy integration tests)
 pytest -v
+
+# 2. Live model inference integration test (requires downloaded Julia-1 model weights)
+pytest --run-integration tests/integration/test_live_inference.py -s -v
+
+# 3. Run all tests together (all unit tests + live model inference)
+pytest --run-integration -v
 ```
 
+> **Integration Tests**: Live inference tests require the local Julia-1 model weights (`python -m latch.cli download-model`) and runtime package (`pip install -e ./models/julia-1`). They are separated into `tests/integration/` and skipped by default so that CI environments (e.g. GitHub Actions) run fast, isolated unit test suites without requiring hundreds of megabytes of model weights.
+>
 > **Tip for displaying live test printouts**: Pass `-s` (or `--capture=no`) to `pytest` to prevent output capture and show live `print()` logs, such as model inference probabilities and execution times.
 
 ---
