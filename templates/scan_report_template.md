@@ -16,6 +16,8 @@
 | **Sensitive Findings** | **{leaks_count}** |
 | **Pragma Exemptions (`# latch:ignore`)** | {exempted_pragma_lines} |
 | **Allowlisted File Exemptions** | {exempted_allowlist_files} |
+| **Gitignore File Exemptions** | {exempted_gitignore_files} |
+| **Ignored Directories** | {ignored_dirs} |
 | **Total Scan Latency** | {total_latency_ms} ms ({latency_sec}s) |
 | **Inference Mode** | `{mode}` |
 

@@ -19,6 +19,7 @@ from latch.client import Client
 from latch.config import DEFAULT_PII_THRESHOLD, LatchConfig, get_config
 from latch.diff_parser import AddedLine, DiffParser, LATCH_IGNORE_PRAGMA
 from latch.dissection import DissectionResult, Dissector
+from latch.gitignore import GitignoreParser
 from latch.prompt import StateBuilder
 
 DEFAULT_SCAN_EXTENSIONS: FrozenSet[str] = frozenset({
@@ -116,6 +117,8 @@ class ScanReport:
     mode: str = "in_process"
     exempted_pragma_lines: int = 0
     exempted_allowlist_files: int = 0
+    exempted_gitignore_files: int = 0
+    ignored_dirs: List[str] = field(default_factory=list)
     threshold: float = DEFAULT_PII_THRESHOLD
     errored_chunks: int = 0
     timestamp: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"))
@@ -182,6 +185,8 @@ class ScanReport:
             "mode": self.mode,
             "exempted_pragma_lines": self.exempted_pragma_lines,
             "exempted_allowlist_files": self.exempted_allowlist_files,
+            "exempted_gitignore_files": self.exempted_gitignore_files,
+            "ignored_dirs": self.ignored_dirs,
             "suggested_allowlists": self.get_suggested_allowlists(),
             "findings": [
                 {
@@ -251,6 +256,7 @@ class ScanReport:
             total_lines_formatted = f"{self.total_lines:,}"
             total_latency_formatted = f"{self.total_latency_ms:,}"
             latency_sec_formatted = f"{self.total_latency_ms / 1000.0:.2f}"
+            ignored_dirs_str = ", ".join(f"`{d}`" for d in sorted(self.ignored_dirs)) if self.ignored_dirs else "None"
             placeholders = {
                 "{target_dir}": self.target_dir,
                 "{timestamp}": self.timestamp,
@@ -262,6 +268,8 @@ class ScanReport:
                 "{leaks_count}": f"{len(self.leaks):,}",
                 "{exempted_pragma_lines}": f"{self.exempted_pragma_lines:,}",
                 "{exempted_allowlist_files}": f"{self.exempted_allowlist_files:,}",
+                "{exempted_gitignore_files}": f"{self.exempted_gitignore_files:,}",
+                "{ignored_dirs}": ignored_dirs_str,
                 "{total_latency_ms}": total_latency_formatted,
                 "{total_latency_ms:,}": total_latency_formatted,
                 "{latency_sec}": latency_sec_formatted,
@@ -339,9 +347,12 @@ class Scanner:
         self.allowlist_paths = combined_allowlists
 
         combined_ignored = set(DEFAULT_IGNORED_DIRS)
+        if self.config.ignored_dirs:
+            combined_ignored.update(self.config.ignored_dirs)
         if ignored_dirs:
             combined_ignored.update(ignored_dirs)
         self.ignored_dirs = combined_ignored
+        self.last_exempted_gitignore_files = 0
 
         self.diff_parser = diff_parser or DiffParser(
             max_chunk_tokens=self.config.max_chunk_tokens,
@@ -358,22 +369,43 @@ class Scanner:
         """Check if relative path matches any configured allowlist pattern."""
         return is_path_allowlisted(rel_path, self.allowlist_paths)
 
-
     def collect_source_files(
         self,
         target_dir: Path,
         extensions: Set[str],
         ignored_dirs: Set[str],
         ignored_files: Optional[Set[str]] = None,
-    ) -> Tuple[List[Path], int]:
+        use_gitignore: bool = True,
+        return_details: bool = False,
+    ) -> Union[Tuple[List[Path], int], Tuple[List[Path], int, int]]:
         """Walks directory and yields non-ignored, text source files."""
         matched_files: List[Path] = []
         allowlisted_count = 0
+        gitignore_exempted_count = 0
         active_ignored_files = ignored_files if ignored_files is not None else set(DEFAULT_IGNORED_FILES)
 
+        gitignore_parser = GitignoreParser.from_directory(target_dir) if use_gitignore else None
+
         for root, dirs, files in os.walk(target_dir):
+            # If nested .gitignore exists in this subfolder, add its rules
+            if gitignore_parser and ".gitignore" in files:
+                gitignore_parser.add_file(Path(root) / ".gitignore", base_dir=root)
+
             # In-place prune of ignored directory names
-            dirs[:] = [d for d in dirs if d not in ignored_dirs and not d.startswith(".")]
+            pruned_dirs = []
+            for d in dirs:
+                if d in ignored_dirs or (d.startswith(".") and d not in (".", "..")):
+                    continue
+                d_path = Path(root) / d
+                if gitignore_parser and gitignore_parser.is_ignored(d_path, is_dir=True):
+                    for sub_root, _, sub_files in os.walk(d_path):
+                        for sf in sub_files:
+                            ext = os.path.splitext(sf)[1].lower()
+                            if ext in extensions:
+                                gitignore_exempted_count += 1
+                    continue
+                pruned_dirs.append(d)
+            dirs[:] = pruned_dirs
 
             rel_root = os.path.relpath(root, target_dir)
             if rel_root != "." and self._is_path_allowlisted(rel_root):
@@ -400,9 +432,16 @@ class Scanner:
                         allowlisted_count += 1
                         continue
 
+                    if gitignore_parser and gitignore_parser.is_ignored(full_path, is_dir=False):
+                        gitignore_exempted_count += 1
+                        continue
+
                     if not is_binary_file(full_path):
                         matched_files.append(full_path)
 
+        self.last_exempted_gitignore_files = gitignore_exempted_count
+        if return_details:
+            return sorted(matched_files), allowlisted_count, gitignore_exempted_count
         return sorted(matched_files), allowlisted_count
 
     def scan(
@@ -414,6 +453,7 @@ class Scanner:
         progress_callback: Optional[Callable[[int, int], None]] = None,
         allowlist_paths: Optional[Sequence[str]] = None,
         ignored_dirs: Optional[Sequence[str]] = None,
+        use_gitignore: bool = True,
     ) -> ScanReport:
         """Executes full scan of target directory and returns ScanReport."""
         root_path = Path(target_dir).resolve()
@@ -435,10 +475,12 @@ class Scanner:
                     self.allowlist_paths.append(p)
 
         # Collect source files
-        source_files, allowlisted_files = self.collect_source_files(
+        source_files, allowlisted_files, gitignore_files = self.collect_source_files(
             root_path,
             extensions=active_exts,
             ignored_dirs=active_ignored,
+            use_gitignore=use_gitignore,
+            return_details=True,
         )
 
         all_lines: List[AddedLine] = []
@@ -531,6 +573,8 @@ class Scanner:
             mode=last_mode,
             exempted_pragma_lines=pragma_exemptions,
             exempted_allowlist_files=allowlisted_files,
+            exempted_gitignore_files=gitignore_files,
+            ignored_dirs=sorted(active_ignored),
             threshold=active_threshold,
             errored_chunks=errored_chunks,
         )

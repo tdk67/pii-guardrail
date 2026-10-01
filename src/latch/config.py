@@ -41,6 +41,7 @@ class LatchConfig:
     noul_criteria_path: str = "./fixtures/noul_criteria.json"
     benchmark_fixtures_dir: str = "./fixtures/"
     allowlist_paths: List[str] = field(default_factory=list)
+    ignored_dirs: List[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         """Resolve paths relative to package root if running outside project CWD."""

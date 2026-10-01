@@ -388,3 +388,50 @@ def test_scanner_allowlist_patterns():
     assert scanner_adv._is_path_allowlisted("fixtures/foo") is True
     assert scanner_adv._is_path_allowlisted("foo/bar/baz") is True
 
+
+def test_scanner_respects_gitignore(tmp_path: Path):
+    (tmp_path / ".gitignore").write_text("CoverLetters/\n*.local.json\n", encoding="utf-8")
+    (tmp_path / "CoverLetters").mkdir()
+    (tmp_path / "CoverLetters" / "letter.html").write_text("<html>Personal Data</html>", encoding="utf-8")  # latch:ignore
+    (tmp_path / "config.local.json").write_text('{"secret": "val"}', encoding="utf-8")  # latch:ignore
+    (tmp_path / "app.py").write_text("print('hello')", encoding="utf-8")
+
+    scanner = Scanner(config=LatchConfig())
+    matched, allowlisted, gitignored = scanner.collect_source_files(
+        target_dir=tmp_path,
+        extensions={".py", ".html", ".json"},
+        ignored_dirs=set(DEFAULT_IGNORED_DIRS),
+        use_gitignore=True,
+        return_details=True,
+    )
+
+    names = [p.name for p in matched]
+    assert "app.py" in names
+    assert "letter.html" not in names
+    assert "config.local.json" not in names
+    assert gitignored >= 2
+
+
+def test_scanner_custom_ignored_dirs_in_config(tmp_path: Path):
+    cfg = LatchConfig(ignored_dirs=["CustomDir", "CoverLetters"])
+    scanner = Scanner(config=cfg, ignored_dirs=["ExtraDir"])
+
+    assert "CustomDir" in scanner.ignored_dirs
+    assert "CoverLetters" in scanner.ignored_dirs
+    assert "ExtraDir" in scanner.ignored_dirs
+
+
+def test_scan_report_markdown_displays_ignored_dirs_and_gitignore():
+    report = ScanReport(
+        target_dir="/test/repo",
+        total_files=10,
+        total_lines=500,
+        total_chunks=5,
+        exempted_gitignore_files=7,
+        ignored_dirs=["CoverLetters", "fixtures"],
+    )
+    md = report.to_markdown()
+    assert "| **Gitignore File Exemptions** | 7 |" in md
+    assert "`CoverLetters`, `fixtures`" in md
+
+

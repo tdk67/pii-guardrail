@@ -270,11 +270,22 @@ def run_scan(
     report_path: Optional[str] = None,
     allowlist_paths: Optional[Sequence[str]] = None,
     ignored_dirs: Optional[Sequence[str]] = None,
+    use_gitignore: bool = True,
 ) -> int:
     """Scan an entire codebase directory for PII and leaked credentials."""
     cfg = config or get_config()
     pres = Presenter()
     extensions = [e.strip() if e.strip().startswith(".") else f".{e.strip()}" for e in ext.split(",")] if ext else None
+
+    # Flatten comma-separated ignored_dirs items if supplied
+    flat_ignored: List[str] = []
+    if ignored_dirs:
+        for item in ignored_dirs:
+            for part in item.split(","):
+                clean = part.strip()
+                if clean:
+                    flat_ignored.append(clean)
+    active_ignored_dirs = flat_ignored if flat_ignored else None
 
     target_abs = os.path.abspath(path)
     print(f"Scanning codebase at '{target_abs}' with Julia-1...")
@@ -284,7 +295,7 @@ def run_scan(
             config=cfg,
             client=client,
             allowlist_paths=allowlist_paths,
-            ignored_dirs=ignored_dirs,
+            ignored_dirs=active_ignored_dirs,
         )
 
         is_daemon = scan_engine.client.is_daemon_alive()
@@ -306,7 +317,8 @@ def run_scan(
             max_chunk_tokens=max_chunk_tokens,
             progress_callback=on_progress,
             allowlist_paths=allowlist_paths,
-            ignored_dirs=ignored_dirs,
+            ignored_dirs=active_ignored_dirs,
+            use_gitignore=use_gitignore,
         )
 
         if sys.stdout.isatty() and report.total_chunks > 0:
@@ -333,6 +345,7 @@ def run_scan(
             mode=report.mode,
             target_dir=report.target_dir,
             errored_chunks=report.errored_chunks,
+            exempted_gitignore=report.exempted_gitignore_files,
         )
         print(summary)
 
@@ -401,9 +414,10 @@ def main(args: Optional[list[str]] = None) -> None:
     scan_parser.add_argument("--threshold", type=float, default=None, help="Custom PII threshold (default from config: 0.65)")
     scan_parser.add_argument("--ext", type=str, default=None, help="Comma-separated file extensions to include (e.g. .py,.ts,.js,.json)")
     scan_parser.add_argument("--max-chunk-tokens", type=int, default=None, help="Maximum tokens per chunk (default from config: 750)")
-    scan_parser.add_argument("--ignore-dir", action="append", default=[], help="Directory name or pattern to ignore")
+    scan_parser.add_argument("--ignore-dir", action="append", default=[], help="Directory name or comma-separated names to ignore (e.g. fixtures,CoverLetters)")
     scan_parser.add_argument("--allowlist", action="append", default=[], help="File or path pattern to allowlist")
     scan_parser.add_argument("--report", type=str, default=None, help="Custom output path for scan report (.md and .json)")
+    scan_parser.add_argument("--no-gitignore", action="store_true", default=False, help="Disable automatic .gitignore file and directory filtering")
 
     # Command: download-model
     subparsers.add_parser("download-model", help="Download open Julia-1 model weights from Hugging Face")
@@ -435,6 +449,7 @@ def main(args: Optional[list[str]] = None) -> None:
             report_path=parsed.report,
             allowlist_paths=parsed.allowlist,
             ignored_dirs=parsed.ignore_dir,
+            use_gitignore=not parsed.no_gitignore,
         )
         sys.exit(exit_code)
     elif parsed.command == "download-model":

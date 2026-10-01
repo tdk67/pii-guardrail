@@ -130,6 +130,7 @@ class Presenter:
         mode: str,
         target_dir: str,
         errored_chunks: int = 0,
+        exempted_gitignore: int = 0,
     ) -> str:  # latch:ignore
         """Renders whole-codebase scan summary banner."""  # latch:ignore
         check_sym = "✓" if self.supports_unicode else "[OK]"  # latch:ignore
@@ -145,12 +146,17 @@ class Presenter:
             status_line = self._c(self.RED + self.BOLD, f"{cross_sym} Latch Scan: {leaks_count} Leak(s) Detected{err_suffix}")
             result_str = f"FAIL - {leaks_count} sensitive leak(s) isolated."
         mode_label = "daemon" if mode == "daemon" else "in-process"  # latch:ignore
+        extra_lines = []
+        if exempted_gitignore > 0:
+            extra_lines.append(f"  Exemptions: {exempted_gitignore:,} file(s) skipped via .gitignore")
+        extra_block = ("\n" + "\n".join(extra_lines)) if extra_lines else ""
         return (  # latch:ignore
             f"\n{status_line}\n"  # latch:ignore
             f"  Target:     {target_dir}\n"  # latch:ignore
             f"  Inspected:  {total_files} files, {total_lines:,} lines across {total_chunks} chunks\n"  # latch:ignore
             f"  Execution:  {latency_ms:,}ms ({mode_label})\n"  # latch:ignore
             f"  Result:     {result_str}"  # latch:ignore
+            f"{extra_block}"  # latch:ignore
         )  # latch:ignore
 
     def format_error(self, title: str, error_detail: str, action: str, context: str = "Commit") -> str:  # latch:ignore
