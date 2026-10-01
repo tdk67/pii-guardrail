@@ -539,7 +539,10 @@ class DaemonManager:
         """Display daemon status report."""
         if self.is_running():
             pid = self.get_pid()
+            token = self.get_token() or ""
+            dash_url = f"http://127.0.0.1:{self.config.daemon_port}/dashboard?token={token}" if token else f"http://127.0.0.1:{self.config.daemon_port}/dashboard"
             print(f"[OK] Latch daemon: RUNNING on 127.0.0.1:{self.config.daemon_port} (PID: {pid or 'active'})")
+            print(f"[INFO] Observability Dashboard: {dash_url}")
         else:
             port_open = False
             try:

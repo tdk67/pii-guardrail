@@ -160,12 +160,34 @@ The warm background daemon is instrumented with an in-memory, sub-millisecond ph
 
 ### 1. Instant Built-in Web Dashboard (Zero Setup)
 
-Whenever the daemon is running, open your browser to:
-```
-http://127.0.0.1:5138/dashboard
+To protect local telemetry and daemon control from unauthorized local processes or browser tabs, the daemon enforces mutual authentication via an ephemeral token generated at startup and saved to `.latch/daemon.token`.
+
+#### Getting Your Authenticated Dashboard Link
+
+Run the status command to output the pre-authenticated clickable URL:
+
+```bash
+# Windows PowerShell
+.\scripts\windows\status-daemon.ps1
+
+# Or via CLI directly (cross-platform)
+python -m latch.cli daemon status
 ```
 
-This serves a standalone, lightweight monitoring interface built into Latch that visualizes:
+**Output:**
+```text
+[OK] Latch daemon: RUNNING on 127.0.0.1:5138 (PID: 29056)
+[INFO] Observability Dashboard: http://127.0.0.1:5138/dashboard?token=41c58541262c591f42da469d...
+```
+
+Open that URL in your browser:
+```
+http://127.0.0.1:5138/dashboard?token=<YOUR_DAEMON_TOKEN>
+```
+
+> **Note**: Accessing `/dashboard` without the `?token=` parameter will return `401 Unauthorized`. The dashboard automatically passes your token to background telemetry polling and Prometheus export links.
+
+The standalone web interface visualizes:
 - **Live throughput**: Requests/sec and Token/sec gauges.
 - **Rolling Percentiles**: Cards showing `p50`, `p90`, `p99`, `avg`, `min`, and `max` latency.
 - **Stacked Execution Phase Bars**: Color-coded breakdown showing exactly where milliseconds are spent.
@@ -174,18 +196,28 @@ This serves a standalone, lightweight monitoring interface built into Latch that
 
 ### 2. Telemetry Endpoints
 
-- **JSON Telemetry**: `GET http://127.0.0.1:5138/v1/stats`
+All telemetry endpoints require the daemon authentication token, supplied via query parameter (`?token=...`) or header (`X-Latch-Token: ...`):
+
+- **JSON Telemetry (`/v1/stats`)**:
   ```bash
-  curl http://127.0.0.1:5138/v1/stats
+  # Query parameter
+  curl "http://127.0.0.1:5138/v1/stats?token=$(cat .latch/daemon.token)"
+
+  # Or using header
+  curl -H "X-Latch-Token: $(cat .latch/daemon.token)" http://127.0.0.1:5138/v1/stats
   ```
-- **Prometheus Metrics**: `GET http://127.0.0.1:5138/metrics`
+- **Prometheus Metrics (`/metrics`)**:
   ```bash
-  curl http://127.0.0.1:5138/metrics
+  # Query parameter
+  curl "http://127.0.0.1:5138/metrics?token=$(cat .latch/daemon.token)"
+
+  # Or using header
+  curl -H "X-Latch-Token: $(cat .latch/daemon.token)" http://127.0.0.1:5138/metrics
   ```
   Exposes gauges and counters for:
   - `latch_daemon_uptime_seconds`
-  - `latch_daemon_requests_total`, `latch_daemon_tokens_total`, `latch_daemon_errors_total`
-  - `latch_daemon_throughput_reqs_per_sec`, `latch_daemon_throughput_tokens_per_sec`
+  - `latch_daemon_requests_total`, `latch_daemon_tokens_processed_total`
+  - `latch_daemon_throughput_reqs_per_second`, `latch_daemon_throughput_tokens_per_second`
   - `latch_phase_duration_ms{phase="forward",stat="p50|p90|p99|avg"}`
 
 ---
@@ -196,7 +228,7 @@ To set up visual monitoring with Prometheus and Grafana:
 
 ### Step 1: Run Prometheus
 
-1. Create a minimal `prometheus.yml` configuration:
+1. Create a minimal `prometheus.yml` configuration (including the `token` parameter from `.latch/daemon.token`):
    ```yaml
    global:
      scrape_interval: 2s
@@ -205,6 +237,8 @@ To set up visual monitoring with Prometheus and Grafana:
    scrape_configs:
      - job_name: "latch-daemon"
        metrics_path: "/metrics"
+       params:
+         token: ["<YOUR_DAEMON_TOKEN>"]
        static_configs:
          - targets: ["127.0.0.1:5138"]
    ```
