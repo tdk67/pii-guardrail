@@ -1,4 +1,3 @@
-import pytest
 from latch.presenter import Presenter
 
 

@@ -1,4 +1,3 @@
-import os
 import pytest
 from latch.config import LatchConfig
 from latch.engine import JuliaEngine, JuliaEngineError, EvaluationResult

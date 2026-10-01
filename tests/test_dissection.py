@@ -1,5 +1,4 @@
-import pytest
-from latch.diff_parser import AddedLine, DiffBatch, DiffParser, bisect_buffer
+from latch.diff_parser import AddedLine, DiffBatch, bisect_buffer
 from latch.dissection import Dissector, DissectionResult
 from latch.engine import EvaluationResult
 

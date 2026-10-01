@@ -16,9 +16,9 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from typing import Any, Optional
 from latch.config import PACKAGE_ROOT, LatchConfig, get_config
 from latch.engine import EvaluationResult, JuliaEngine
@@ -66,12 +66,29 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
         return host in ("127.0.0.1", "localhost", "")
 
     def _validate_token(self) -> bool:
-        """Validate ephemeral authentication token (S1)."""
+        """Validate ephemeral authentication token (S1). Supports header and ?token= query param."""
         expected = getattr(self.server, "token", None)
         if not expected:
             return True
         auth = self.headers.get("X-Latch-Token", "").strip()
+        if not auth and "?" in self.path:
+            parsed = urllib.parse.urlparse(self.path)
+            query_params = urllib.parse.parse_qs(parsed.query)
+            tokens = query_params.get("token", [])
+            if tokens:
+                auth = tokens[0].strip()
         return secrets.compare_digest(auth, expected)
+
+    def _send_error_500(self, err: Exception) -> None:
+        try:
+            body = json.dumps({"error": f"Internal Server Error: {err}"}).encode("utf-8")
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, OSError):
+            pass
 
     def do_GET(self) -> None:
         """Handle GET requests (e.g. /v1/health)."""
@@ -84,7 +101,19 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
-        if self.path == "/metrics":
+        req_path = urllib.parse.urlparse(self.path).path
+
+        if req_path in ("/metrics", "/v1/stats", "/dashboard"):
+            if not self._validate_token():
+                body = b'{"error": "Unauthorized: invalid or missing token"}'
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+        if req_path == "/metrics":
             try:
                 metrics_tracker = getattr(self.server, "metrics_tracker", None)
                 output = metrics_tracker.to_prometheus().encode("utf-8") if metrics_tracker else b"# No metrics tracker\n"
@@ -93,11 +122,11 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(output)))
                 self.end_headers()
                 self.wfile.write(output)
-            except Exception:
-                pass
+            except Exception as err:
+                self._send_error_500(err)
             return
 
-        if self.path == "/v1/stats":
+        if req_path == "/v1/stats":
             try:
                 metrics_tracker = getattr(self.server, "metrics_tracker", None)
                 stats = metrics_tracker.get_summary() if metrics_tracker else {}
@@ -107,11 +136,11 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(output)))
                 self.end_headers()
                 self.wfile.write(output)
-            except Exception:
-                pass
+            except Exception as err:
+                self._send_error_500(err)
             return
 
-        if self.path == "/dashboard":
+        if req_path == "/dashboard":
             try:
                 tpl_path = os.path.join(PACKAGE_ROOT, "templates", "dashboard.html")
                 if not os.path.exists(tpl_path):
@@ -123,11 +152,11 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(output)))
                 self.end_headers()
                 self.wfile.write(output)
-            except Exception:
-                pass
+            except Exception as err:
+                self._send_error_500(err)
             return
 
-        if self.path == "/v1/health":
+        if req_path == "/v1/health":
             try:
                 is_auth = self._validate_token()
                 challenge_resp = None
@@ -406,7 +435,10 @@ class DaemonManager:
     def start_background(self) -> bool:
         """Start daemon in detached background process."""
         if self.is_running():
+            token = self.get_token() or ""
+            dash_url = f"http://127.0.0.1:{self.config.daemon_port}/dashboard?token={token}" if token else f"http://127.0.0.1:{self.config.daemon_port}/dashboard"
             print(f"[OK] Latch daemon is already running on port {self.config.daemon_port}.")
+            print(f"[INFO] Observability Dashboard: {dash_url}")
             return True
 
         print(f"Starting Latch daemon on 127.0.0.1:{self.config.daemon_port}...")
@@ -440,7 +472,10 @@ class DaemonManager:
         for _ in range(60):
             time.sleep(0.5)
             if self.is_running():
+                token = self.get_token() or ""
+                dash_url = f"http://127.0.0.1:{self.config.daemon_port}/dashboard?token={token}" if token else f"http://127.0.0.1:{self.config.daemon_port}/dashboard"
                 print(f"[OK] Latch daemon warm and ready on port {self.config.daemon_port} (PID: {proc.pid}).")
+                print(f"[INFO] Observability Dashboard: {dash_url}")
                 return True
 
         print("[ERROR] Daemon started but failed health check within 30 seconds.", file=sys.stderr)
@@ -462,7 +497,7 @@ class DaemonManager:
 
         req = urllib.request.Request(url, data=b"{}", headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=1.0) as resp:
+            with urllib.request.urlopen(req, timeout=1.0):
                 pass
         except Exception:
             # Fallback to terminating PID directly
@@ -510,7 +545,7 @@ class DaemonManager:
                 pass
             if port_open:
                 print(f"[WARN] Port {self.config.daemon_port} is listening, but daemon authentication token is missing or invalid.")
-                print(f"       Restart daemon with 'python -m latch.cli daemon stop' and 'start'.")
+                print("       Restart daemon with 'python -m latch.cli daemon stop' and 'start'.")
             else:
                 print(f"[INFO] Latch daemon: STOPPED (port {self.config.daemon_port} not responding)")
 

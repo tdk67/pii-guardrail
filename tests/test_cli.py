@@ -1,7 +1,5 @@
-import pytest
 from unittest.mock import MagicMock, patch
 from latch.cli import run_check
-from latch.config import LatchConfig
 from latch.diff_parser import AddedLine, DiffBatch
 from latch.engine import EvaluationResult, JuliaEngineError
 
@@ -97,7 +95,7 @@ def test_run_check_wires_state_builder_prompt_delimiters():
 
 def test_cli_scan_arguments(tmp_path):
     from latch.cli import main
-    with patch("latch.cli.run_scan") as mock_scan, patch("sys.exit") as mock_exit:
+    with patch("latch.cli.run_scan") as mock_scan, patch("sys.exit"):
         mock_scan.return_value = 0
         main([
             "scan",

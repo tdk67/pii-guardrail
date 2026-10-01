@@ -1,7 +1,6 @@
-import os
 import json
 import pytest
-from latch.config import ConfigManager, LatchConfig, ConfigError
+from latch.config import ConfigManager, ConfigError
 
 
 def test_load_default_config(tmp_path):

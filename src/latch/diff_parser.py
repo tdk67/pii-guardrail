@@ -5,14 +5,14 @@ and packs added lines into structured context buffers for Julia-1.
 """
 
 from __future__ import annotations
-import fnmatch
-from pathlib import PurePath
 import re
 import shutil
 import subprocess
 import uuid
 from dataclasses import dataclass
 from typing import List, Optional, Sequence
+
+from latch.allowlist import compute_max_line_chars, is_path_allowlisted
 
 
 class DiffParserError(Exception):
@@ -143,23 +143,7 @@ class DiffParser:
 
     def _is_allowlisted(self, file_path: str) -> bool:
         """Check if file matches any path pattern in allowlist_paths."""
-        if not self.allowlist_paths:
-            return False
-        clean_path = file_path.replace("\\", "/")
-        p = PurePath(clean_path)
-        for pattern in self.allowlist_paths:
-            clean_pat = pattern.replace("\\", "/")
-            if "/" in clean_pat or "**" in clean_pat:
-                if fnmatch.fnmatch(clean_path, clean_pat):
-                    return True
-            else:
-                # Top-level glob pattern without slashes (e.g. *.md) only matches root-level files
-                if "/" not in clean_path and fnmatch.fnmatch(clean_path, clean_pat):
-                    return True
-                # Exact basename match if pattern is a specific filename without wildcards (e.g. LICENSE)
-                if "*" not in clean_pat and p.name == clean_pat:
-                    return True
-        return False
+        return is_path_allowlisted(file_path, self.allowlist_paths)
 
     def parse_diff_text(self, diff_text: str) -> List[AddedLine]:
         """Pure functional parser extracting added lines and line numbers."""
@@ -223,7 +207,7 @@ class DiffParser:
                     continue
 
                 # Oversized single line splitting (protects model context from giant minified lines)
-                max_line_chars = max(100, (self.max_chunk_tokens - 10) * 4)
+                max_line_chars = compute_max_line_chars(self.max_chunk_tokens)
                 if len(content) > max_line_chars:
                     for start in range(0, len(content), max_line_chars):
                         chunk_content = content[start : start + max_line_chars]
@@ -260,7 +244,7 @@ class DiffParser:
         batches: List[DiffBatch] = []
         current_lines: List[AddedLine] = []
         current_tokens = 0
-        max_line_chars = max(100, (self.max_chunk_tokens - 10) * 4)
+        max_line_chars = compute_max_line_chars(self.max_chunk_tokens)
 
         for line in lines:
             # If a single line exceeds max_line_chars (e.g. minified JS, giant JSON, lockfiles),

@@ -1,7 +1,5 @@
-import json
 import threading
 import time
-import pytest
 from unittest.mock import MagicMock
 from latch.client import Client
 from latch.config import LatchConfig

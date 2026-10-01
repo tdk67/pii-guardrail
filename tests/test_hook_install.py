@@ -1,8 +1,7 @@
 import os
-import stat
 import sys
 import pytest
-from latch.hook import install_pre_commit_hook, find_git_dir, HookInstallError
+from latch.hook import install_pre_commit_hook, HookInstallError
 
 
 def test_install_hook_in_valid_git_repo(tmp_path):
@@ -19,6 +18,16 @@ def test_install_hook_in_valid_git_repo(tmp_path):
     
     import shlex
     assert shlex.quote(str(sys.executable)) in content or sys.executable in content
+
+    # Target repo's .gitignore must contain .latch/ (R7-5)
+    gitignore_path = tmp_path / ".gitignore"
+    assert gitignore_path.exists()
+    assert ".latch/" in gitignore_path.read_text(encoding="utf-8")
+
+    # Re-running install must be idempotent
+    install_pre_commit_hook(repo_root=str(tmp_path))
+    lines = gitignore_path.read_text(encoding="utf-8").splitlines()
+    assert lines.count(".latch/") == 1
 
 
 def test_install_hook_missing_git_dir_raises_error(tmp_path):

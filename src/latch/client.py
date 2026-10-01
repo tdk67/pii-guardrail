@@ -5,14 +5,10 @@ and in-process evaluation (cold-start fallback).
 """
 
 from __future__ import annotations
-import hashlib
-import hmac
+import http.client
 import json
 import os
-import secrets
-import urllib.error
-import urllib.request
-from typing import Optional
+from typing import Any, Optional
 from latch.config import LatchConfig, get_config
 from latch.daemon import probe_daemon, resolve_token_file
 from latch.engine import EvaluationResult, JuliaEngine
@@ -39,7 +35,6 @@ class Client:
     def _get_http_connection(self) -> http.client.HTTPConnection:
         """Obtain or initialize a persistent HTTP connection to the local daemon."""
         if self._http_conn is None:
-            import http.client
             self._http_conn = http.client.HTTPConnection(
                 "127.0.0.1",
                 self.config.daemon_port,

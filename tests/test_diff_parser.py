@@ -1,5 +1,4 @@
-import pytest
-from latch.diff_parser import DiffParser, AddedLine, DiffBatch
+from latch.diff_parser import DiffParser, AddedLine
 
 
 SAMPLE_DIFF = """diff --git a/src/user.py b/src/user.py
@@ -91,6 +90,28 @@ def test_diff_parser_respects_allowlist():
     assert "docs/notes.txt" not in files
     assert "src/user.py" in files
     assert len(added_lines) == 2
+
+
+def test_diff_parser_rejects_over_permissive_near_miss_allowlist():
+    diff_text = (
+        "diff --git a/myapp/config/secret.env b/myapp/config/secret.env\n"
+        "--- a/myapp/config/secret.env\n"
+        "+++ b/myapp/config/secret.env\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+SECRET_KEY=123\n"
+        "diff --git a/app/config/secret.env b/app/config/secret.env\n"
+        "--- a/app/config/secret.env\n"
+        "+++ b/app/config/secret.env\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+EXEMPTED_KEY=456\n"
+    )
+    parser = DiffParser(allowlist_paths=["app/config"])
+    added_lines = parser.parse_diff_text(diff_text)
+    files = {l.file_path for l in added_lines}
+    # myapp/config/secret.env must NOT be exempted (R7-2)
+    assert "myapp/config/secret.env" in files
+    # app/config/secret.env IS exempted
+    assert "app/config/secret.env" not in files
 
 
 def test_diff_parser_respects_latch_ignore_pragma():

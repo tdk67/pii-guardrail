@@ -6,11 +6,9 @@ test fixtures.
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, field
-import os
+from dataclasses import dataclass
 from pathlib import Path
 import platform
-import time
 from typing import Any, Dict, List, Optional
 from latch.client import Client
 from latch.config import DEFAULT_PII_THRESHOLD, LatchConfig, get_config
@@ -153,7 +151,7 @@ class BenchmarkResult:
             "|                     LATCH BENCHMARK EVALUATION REPORT                       |",
             "+=============================================================================+",
             f" Hardware Baseline : {cpu_model} ({platform.python_implementation()} on {os_info})",
-            f" Decision Model    : Julia-1 (144.3M params, non-autoregressive CPU tensor)",
+            " Decision Model    : Julia-1 (144.3M params, non-autoregressive CPU tensor)",
             f" Decision Threshold: P >= {self.threshold:.2f}",
             "-------------------------------------------------------------------------------",
             f" {'Category':<14} | {'Sample File':<28} | {'Prob':<6} | {'Expected':<8} | {'Status':<7}",

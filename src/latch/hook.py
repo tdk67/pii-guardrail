@@ -79,6 +79,23 @@ def install_pre_commit_hook(
     except OSError:
         pass
 
+    # Ensure target repo ignores .latch/ (R7-5)
+    try:
+        repo_root_path = git_dir.parent
+        gitignore_path = repo_root_path / ".gitignore"
+        entry = ".latch/"
+        if gitignore_path.exists():
+            content = gitignore_path.read_text(encoding="utf-8", errors="replace")
+            existing_lines = [line.strip() for line in content.splitlines()]
+            if ".latch" not in existing_lines and ".latch/" not in existing_lines:
+                prefix = "\n" if content and not content.endswith("\n") else ""
+                with gitignore_path.open("a", encoding="utf-8") as f:
+                    f.write(f"{prefix}{entry}\n")
+        else:
+            gitignore_path.write_text(f"{entry}\n", encoding="utf-8")
+    except OSError:
+        pass
+
     return hook_file
 
 

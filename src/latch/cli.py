@@ -8,7 +8,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from typing import List, Optional
+from typing import Any, Optional, Sequence
 from latch.client import Client
 from latch.config import ConfigError, LatchConfig, get_config
 from latch.daemon import DaemonManager
@@ -291,7 +291,7 @@ def run_scan(
         if is_daemon:
             print(f"[LATCH SCAN] Engine: Warm Daemon (127.0.0.1:{cfg.daemon_port}) [High Throughput]")
         else:
-            print(f"[LATCH SCAN] Engine: In-Process Fallback (Cold Model, ~2s/chunk)")
+            print("[LATCH SCAN] Engine: In-Process Fallback (Cold Model, ~2s/chunk)")
             print("             Tip: Start the daemon with 'python -m latch.cli daemon start' for up to 10x faster scans.")
 
         def on_progress(curr: int, tot: int) -> None:
@@ -332,8 +332,15 @@ def run_scan(
             latency_ms=report.total_latency_ms,
             mode=report.mode,
             target_dir=report.target_dir,
+            errored_chunks=report.errored_chunks,
         )
         print(summary)
+
+        if report.errored_chunks > 0:
+            print(
+                f"[FAIL-CLOSED] {report.errored_chunks} chunk(s) encountered evaluation or read errors. Failing closed.",
+                file=sys.stderr,
+            )
 
         # Save persistent scan reports (markdown and json)
         try:

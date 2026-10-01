@@ -1,12 +1,12 @@
 import json
-import os
 import threading
 import time
+import urllib.error
 import urllib.request
 import pytest
 from latch.config import LatchConfig
 from latch.daemon import DaemonServer, DaemonManager
-from latch.engine import EvaluationResult, JuliaEngine
+from latch.engine import EvaluationResult
 
 
 class MockEngine:
@@ -48,24 +48,34 @@ def test_daemon_health_endpoint(test_server):
 
 def test_daemon_metrics_and_stats_endpoints(test_server):
     cfg, _, server = test_server
-    # 1. Prometheus /metrics
+
+    # 1. Unauthenticated requests must receive 401
+    for path in ("/metrics", "/v1/stats", "/dashboard"):
+        url = f"http://127.0.0.1:{cfg.daemon_port}{path}"
+        req_unauth = urllib.request.Request(url, method="GET")
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            urllib.request.urlopen(req_unauth, timeout=1.0)
+        assert excinfo.value.code == 401
+        assert "Content-Length" in excinfo.value.headers
+
+    # 2. Prometheus /metrics with token header
     metrics_url = f"http://127.0.0.1:{cfg.daemon_port}/metrics"
-    req_m = urllib.request.Request(metrics_url, method="GET")
+    req_m = urllib.request.Request(metrics_url, headers={"X-Latch-Token": server.token}, method="GET")
     with urllib.request.urlopen(req_m, timeout=1.0) as resp:
         text = resp.read().decode("utf-8")
     assert "latch_daemon_uptime_seconds" in text
     assert "latch_daemon_requests_total" in text
 
-    # 2. JSON /v1/stats
-    stats_url = f"http://127.0.0.1:{cfg.daemon_port}/v1/stats"
+    # 3. JSON /v1/stats with query param token
+    stats_url = f"http://127.0.0.1:{cfg.daemon_port}/v1/stats?token={server.token}"
     req_s = urllib.request.Request(stats_url, method="GET")
     with urllib.request.urlopen(req_s, timeout=1.0) as resp:
         stats = json.loads(resp.read().decode("utf-8"))
     assert "uptime_seconds" in stats
     assert "total_requests" in stats
 
-    # 3. HTML /dashboard
-    dash_url = f"http://127.0.0.1:{cfg.daemon_port}/dashboard"
+    # 4. HTML /dashboard with query param token
+    dash_url = f"http://127.0.0.1:{cfg.daemon_port}/dashboard?token={server.token}"
     req_d = urllib.request.Request(dash_url, method="GET")
     with urllib.request.urlopen(req_d, timeout=1.0) as resp:
         html = resp.read().decode("utf-8")

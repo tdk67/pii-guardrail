@@ -163,9 +163,27 @@
   </div>
 
   <script>
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function getQueryParam(param) {
+      const urlParams = new URLSearchParams(window.location.search);
+      return urlParams.get(param);
+    }
+    const authToken = getQueryParam('token');
+
     async function updateStats() {
       try {
-        const res = await fetch('/v1/stats');
+        const statsUrl = authToken ? `/v1/stats?token=${encodeURIComponent(authToken)}` : '/v1/stats';
+        const headers = authToken ? { 'X-Latch-Token': authToken } : {};
+        const res = await fetch(statsUrl, { headers });
         if (!res.ok) return;
         const data = await res.json();
         
@@ -211,13 +229,13 @@
             const st = phases[key];
             if (st) {
               tableHtml += `<tr>
-                <td><strong>${label}</strong></td>
-                <td>${st.min}</td>
-                <td style="font-weight: 600; color: var(--accent);">${st.p50}</td>
-                <td>${st.p90}</td>
-                <td>${st.p99}</td>
-                <td>${st.max}</td>
-                <td>${st.avg}</td>
+                <td><strong>${escapeHtml(label)}</strong></td>
+                <td>${escapeHtml(st.min)}</td>
+                <td style="font-weight: 600; color: var(--accent);">${escapeHtml(st.p50)}</td>
+                <td>${escapeHtml(st.p90)}</td>
+                <td>${escapeHtml(st.p99)}</td>
+                <td>${escapeHtml(st.max)}</td>
+                <td>${escapeHtml(st.avg)}</td>
               </tr>`;
             }
           }
@@ -228,12 +246,13 @@
           let reqHtml = '';
           for (const r of data.recent_requests.slice().reverse()) {
             const probColor = r.probability >= 0.65 ? 'var(--red)' : 'var(--green)';
+            const escapedId = escapeHtml(r.request_id || '-');
             reqHtml += `<tr>
-              <td><code>${r.request_id || '-'}</code></td>
-              <td>${r.tokens}</td>
-              <td>${r.forward_ms}ms</td>
-              <td>${r.total_ms}ms</td>
-              <td style="font-weight:600; color:${probColor};">${r.probability}</td>
+              <td><code>${escapedId}</code></td>
+              <td>${escapeHtml(r.tokens)}</td>
+              <td>${escapeHtml(r.forward_ms)}ms</td>
+              <td>${escapeHtml(r.total_ms)}ms</td>
+              <td style="font-weight:600; color:${probColor};">${escapeHtml(r.probability)}</td>
             </tr>`;
           }
           document.getElementById('recent-requests-body').innerHTML = reqHtml;

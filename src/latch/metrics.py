@@ -11,13 +11,12 @@ Exposes both Prometheus /metrics format and JSON /v1/stats.
 """
 
 from __future__ import annotations
-import math
 import os
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any, Deque, Dict, List
 
 
 @dataclass

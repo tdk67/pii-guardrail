@@ -7,16 +7,16 @@ binary dissection localization engine.
 
 from __future__ import annotations
 import datetime
-import fnmatch
 import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
 
+from latch.allowlist import compute_max_line_chars, is_path_allowlisted
 from latch.client import Client
 from latch.config import DEFAULT_PII_THRESHOLD, LatchConfig, get_config
-from latch.diff_parser import AddedLine, DiffBatch, DiffParser, LATCH_IGNORE_PRAGMA
+from latch.diff_parser import AddedLine, DiffParser, LATCH_IGNORE_PRAGMA
 from latch.dissection import DissectionResult, Dissector
 from latch.prompt import StateBuilder
 
@@ -49,6 +49,13 @@ def is_binary_file(file_path: Path) -> bool:
         return True
 
 
+def redact_snippet(s: str) -> str:
+    """Mask snippet content to avoid persisting raw credentials/PII to disk."""
+    if not s or len(s) <= 8:
+        return s
+    return s[:4] + "…" + s[-4:]
+
+
 @dataclass
 class ScanReport:
     """Quantitative summary of whole-codebase scan results."""
@@ -62,11 +69,15 @@ class ScanReport:
     exempted_pragma_lines: int = 0
     exempted_allowlist_files: int = 0
     threshold: float = DEFAULT_PII_THRESHOLD
+    errored_chunks: int = 0
     timestamp: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"))
 
     @property
     def is_clean(self) -> bool:
-        return len(self.leaks) == 0
+        # Fail-closed (P0-1 / R7-1): a report with any evaluation or file-read
+        # error is NEVER considered clean, even if zero leaks were observed --
+        # errored chunks were never actually inspected for PII/credentials.
+        return len(self.leaks) == 0 and self.errored_chunks == 0
 
     def get_suggested_allowlists(self) -> List[str]:
         """Analyzes leak locations and generates recommended allowlist paths."""
@@ -101,15 +112,23 @@ class ScanReport:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert report to serializable dictionary."""
+        if self.is_clean:
+            status_str = "CLEAN"
+        elif self.errored_chunks > 0 and not self.leaks:
+            status_str = "ERROR"
+        else:
+            status_str = "BLOCKED"
+
         return {
             "target_dir": self.target_dir,
             "timestamp": self.timestamp,
             "is_clean": self.is_clean,
-            "status": "CLEAN" if self.is_clean else "BLOCKED",
+            "status": status_str,
             "threshold": self.threshold,
             "total_files": self.total_files,
             "total_lines": self.total_lines,
             "total_chunks": self.total_chunks,
+            "errored_chunks": self.errored_chunks,
             "leaks_count": len(self.leaks),
             "total_latency_ms": self.total_latency_ms,
             "mode": self.mode,
@@ -129,7 +148,7 @@ class ScanReport:
             ],
         }
 
-    def to_markdown(self) -> str:
+    def to_markdown(self, redact: bool = True) -> str:
         """Convert report to comprehensive Markdown document using template."""
         pkg_root = Path(__file__).resolve().parent.parent.parent
         template_file = pkg_root / "templates" / "scan_report_template.md"
@@ -142,20 +161,34 @@ class ScanReport:
                 template_text = ""
 
         if self.is_clean:
+            status_banner = "CLEAN - Passed"
+        elif self.errored_chunks > 0 and not self.leaks:
+            status_banner = f"ERROR - {self.errored_chunks} Chunk(s) Failed to Evaluate"
+        elif self.errored_chunks > 0 and self.leaks:
+            status_banner = f"BLOCKED - {len(self.leaks)} Leak(s) Detected, {self.errored_chunks} Chunk(s) Errored"
+        else:
+            status_banner = f"BLOCKED - {len(self.leaks)} Leak(s) Detected"
+
+        if self.is_clean:
             findings_section = "✅ **No sensitive PII or credentials detected across scanned files.**"
         else:
             findings_blocks = []
+            if self.errored_chunks > 0:
+                findings_blocks.append(
+                    f"⚠️ **Scan Warnings:** Encountered {self.errored_chunks} evaluation or read error(s) during scan (Fail-Closed).\n"
+                )
             for idx, leak in enumerate(self.leaks, start=1):
                 clean_file = leak.offending_file.replace("\\", "/")
                 abs_target = Path(self.target_dir) / clean_file
                 file_link = f"[{clean_file}](file:///{str(abs_target.resolve()).replace(os.sep, '/')}#L{leak.start_line}-L{leak.end_line})"
+                snip = redact_snippet(leak.snippet) if redact else leak.snippet
                 block = [
                     f"### Finding {idx}: {file_link} (Lines {leak.start_line}–{leak.end_line})",
                     f"- **Confidence:** `{leak.probability:.2f}` (Threshold: `{self.threshold:.2f}`)",
-                    f"- **Status:** Sensitive leak isolated by binary dissection",
+                    "- **Status:** Sensitive leak isolated by binary dissection",
                     "",
                     "```",
-                    leak.snippet,
+                    snip,
                     "```",
                     "",
                 ]
@@ -163,27 +196,39 @@ class ScanReport:
             findings_section = "\n".join(findings_blocks)
 
         suggestions = self.get_suggested_allowlists()
-        suggested_json = "\n".join(f'    "{p}",' for p in suggestions) if suggestions else '    "fixtures/*"'
+        lines = [f'    "{p}"' for p in suggestions]
+        suggested_json = ",\n".join(lines) if lines else '    "fixtures/*"'
 
         if template_text:
-            return template_text.format(
-                target_dir=self.target_dir,
-                timestamp=self.timestamp,
-                status="CLEAN - Passed" if self.is_clean else f"BLOCKED - {len(self.leaks)} Leak(s) Detected",
-                total_files=self.total_files,
-                total_lines=self.total_lines,
-                total_chunks=self.total_chunks,
-                leaks_count=len(self.leaks),
-                exempted_pragma_lines=self.exempted_pragma_lines,
-                exempted_allowlist_files=self.exempted_allowlist_files,
-                total_latency_ms=self.total_latency_ms,
-                latency_sec=self.total_latency_ms / 1000.0,
-                mode=self.mode,
-                findings_section=findings_section,
-                suggested_patterns_json=suggested_json,
-            )
+            placeholders = {
+                "{target_dir}": self.target_dir,
+                "{timestamp}": self.timestamp,
+                "{status}": status_banner,
+                "{total_files}": str(self.total_files),
+                "{total_lines}": f"{self.total_lines:,}",
+                "{total_chunks}": str(self.total_chunks),
+                "{leaks_count}": str(len(self.leaks)),
+                "{exempted_pragma_lines}": str(self.exempted_pragma_lines),
+                "{exempted_allowlist_files}": str(self.exempted_allowlist_files),
+                "{total_latency_ms}": f"{self.total_latency_ms:,}",
+                "{latency_sec}": f"{self.total_latency_ms / 1000.0:.2f}",
+                "{mode}": self.mode,
+                "{findings_section}": findings_section,
+                "{suggested_patterns_json}": suggested_json,
+            }
+            rendered = template_text
+            for placeholder, val in placeholders.items():
+                rendered = rendered.replace(placeholder, str(val))
+            return rendered
         else:
-            return f"# Latch Scan Report\n\nTarget: {self.target_dir}\nLeaks: {len(self.leaks)}\n\n{findings_section}"
+            return (
+                f"# Latch Scan Report\n\n"
+                f"Target: {self.target_dir}\n"
+                f"Status: {status_banner}\n"
+                f"Leaks: {len(self.leaks)}\n"
+                f"Errored Chunks: {self.errored_chunks}\n\n"
+                f"{findings_section}"
+            )
 
     def save_reports(self, output_dir_or_file: Optional[str] = None) -> Tuple[Path, Path]:
         """Persists markdown and json reports to disk."""
@@ -207,8 +252,13 @@ class ScanReport:
             json_path = reports_dir / "scan_report.json"
 
         md_path.parent.mkdir(parents=True, exist_ok=True)
-        md_path.write_text(self.to_markdown(), encoding="utf-8")
-        json_path.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
+        md_path.write_text(self.to_markdown(redact=True), encoding="utf-8")
+        
+        data = self.to_dict()
+        for finding in data.get("findings", []):
+            if "snippet" in finding:
+                finding["snippet"] = redact_snippet(finding["snippet"])
+        json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
         return md_path, json_path
 
@@ -252,35 +302,7 @@ class Scanner:
 
     def _is_path_allowlisted(self, rel_path: str) -> bool:
         """Check if relative path matches any configured allowlist pattern."""
-        norm_path = rel_path.replace("\\", "/").strip("/")
-        path_parts = norm_path.split("/")
-
-        for pattern in self.allowlist_paths:
-            clean_pat = pattern.replace("\\", "/").strip("/")
-            if not clean_pat:
-                continue
-
-            # Case 1: Direct glob match
-            if fnmatch.fnmatch(norm_path, clean_pat):
-                return True
-
-            # Case 2: Match with leading wildcard (e.g. "fixtures/*" matches "tests/fixtures/foo.html")
-            if fnmatch.fnmatch(norm_path, f"*/{clean_pat}") or fnmatch.fnmatch(norm_path, f"**/{clean_pat}"):
-                return True
-
-            # Case 3: Pattern has no slashes (e.g. "fixtures" or "*.min.js")
-            if "/" not in clean_pat:
-                if fnmatch.fnmatch(path_parts[-1], clean_pat):
-                    return True
-                if any(fnmatch.fnmatch(part, clean_pat) for part in path_parts[:-1]):
-                    return True
-            else:
-                # Case 4: Directory prefix or subpath
-                clean_dir = clean_pat.rstrip("/*")
-                if clean_dir in norm_path or fnmatch.fnmatch(norm_path, f"{clean_dir}/*") or fnmatch.fnmatch(norm_path, f"*/{clean_dir}/*"):
-                    return True
-
-        return False
+        return is_path_allowlisted(rel_path, self.allowlist_paths)
 
 
     def collect_source_files(
@@ -368,13 +390,15 @@ class Scanner:
         all_lines: List[AddedLine] = []
         total_source_lines = 0
         pragma_exemptions = 0
+        errored_chunks = 0
 
-        max_line_chars = max(100, (active_chunk_tokens - 10) * 4)
+        max_line_chars = compute_max_line_chars(active_chunk_tokens)
 
         for fpath in source_files:
             try:
                 content = fpath.read_text(encoding="utf-8", errors="replace")
             except Exception:
+                errored_chunks += 1
                 continue
 
             rel_path = str(fpath.relative_to(root_path)).replace("\\", "/")
@@ -427,6 +451,7 @@ class Scanner:
             last_mode = self.client.last_mode
 
             if eval_result.error is not None:
+                errored_chunks += 1
                 continue
 
             if not eval_result.is_clean(active_threshold):
@@ -453,5 +478,6 @@ class Scanner:
             exempted_pragma_lines=pragma_exemptions,
             exempted_allowlist_files=allowlisted_files,
             threshold=active_threshold,
+            errored_chunks=errored_chunks,
         )
 

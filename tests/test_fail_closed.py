@@ -1,5 +1,4 @@
-from unittest.mock import MagicMock, patch
-import pytest
+from unittest.mock import MagicMock
 from latch.cli import run_check
 from latch.config import LatchConfig
 from latch.diff_parser import AddedLine, DiffBatch, DiffParser, DiffParserError
@@ -64,3 +63,53 @@ def test_run_check_fails_closed_when_daemon_returns_eval_error(capsys):
 
     exit_code = run_check(config=cfg, parser=mock_parser, engine=mock_engine)
     assert exit_code == 1
+
+
+def test_scanner_fails_closed_when_client_returns_error(tmp_path):
+    """When client returns an evaluation error during scan, report must not be clean."""
+    from latch.scanner import Scanner
+    from latch.client import Client
+
+    test_file = tmp_path / "test.py"
+    test_file.write_text("x = 1\n", encoding="utf-8")
+
+    mock_client = MagicMock(spec=Client)
+    mock_client.evaluate.return_value = EvaluationResult(
+        probability=0.0,
+        latency_ms=5,
+        error="Daemon crashed or socket timeout",
+    )
+    mock_client.last_mode = "daemon"
+
+    scanner = Scanner(client=mock_client)
+    report = scanner.scan(target_dir=str(tmp_path))
+
+    assert report.errored_chunks == 1
+    assert report.is_clean is False
+    assert report.to_dict()["status"] == "ERROR"
+
+
+def test_cli_run_scan_fails_closed_on_errored_chunks(tmp_path, capsys):
+    """When chunks fail during scan, CLI must report fail-closed and exit 1."""
+    from latch.cli import run_scan
+    from latch.scanner import Scanner
+    from latch.client import Client
+
+    test_file = tmp_path / "code.py"
+    test_file.write_text("a = 1\n", encoding="utf-8")
+
+    mock_client = MagicMock(spec=Client)
+    mock_client.is_daemon_alive.return_value = False
+    mock_client.evaluate.return_value = EvaluationResult(
+        probability=0.0,
+        latency_ms=5,
+        error="Model evaluation failed",
+    )
+    mock_client.last_mode = "in_process"
+
+    scanner = Scanner(client=mock_client)
+    exit_code = run_scan(path=str(tmp_path), scanner=scanner)
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "FAIL-CLOSED" in captured.err

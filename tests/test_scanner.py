@@ -1,11 +1,9 @@
 from pathlib import Path
 from unittest.mock import MagicMock
-import pytest
 from latch.config import LatchConfig
-from latch.diff_parser import AddedLine, DiffBatch
 from latch.dissection import DissectionResult
 from latch.engine import EvaluationResult
-from latch.scanner import DEFAULT_IGNORED_DIRS, DEFAULT_SCAN_EXTENSIONS, ScanReport, Scanner, is_binary_file
+from latch.scanner import DEFAULT_IGNORED_DIRS, ScanReport, Scanner, is_binary_file
 from latch.cli import run_scan
 
 
@@ -235,12 +233,19 @@ def test_scan_report_save_and_markdown(tmp_path: Path):
     assert "Latch Codebase Scan Report" in md_content
     assert "tests/fixtures/data.json" in md_content
     assert "0.99" in md_content
+    # Raw secret must NOT be persisted in markdown
+    assert "abc_secret_123" not in md_content
+    assert "…" in md_content
 
     import json
     data = json.loads(json_path.read_text(encoding="utf-8"))
     assert data["is_clean"] is False
     assert data["leaks_count"] == 1
     assert "tests/fixtures/*" in data["suggested_allowlists"]
+    # Raw secret must NOT be persisted in json
+    persisted_snippet = data["findings"][0]["snippet"]
+    assert "abc_secret_123" not in persisted_snippet
+    assert "…" in persisted_snippet
 
 
 def test_scan_report_whitelist_suggestions():
@@ -272,7 +277,53 @@ def test_scan_report_whitelist_suggestions():
     assert any("mocks" in s for s in suggestions)
 
 
-def test_scanner_allowlist_patterns(tmp_path: Path):
+def test_suggested_allowlist_does_not_over_exempt():
+    report = ScanReport(
+        target_dir=".",
+        total_files=1,
+        total_lines=10,
+        total_chunks=1,
+        leaks=[
+            DissectionResult(
+                offending_file="tests/fixtures/secret.py",
+                start_line=1,
+                end_line=1,
+                snippet="key = '123'",
+                probability=0.9,
+            )
+        ],
+    )
+    suggestions = report.get_suggested_allowlists()
+    assert suggestions
+    from latch.allowlist import is_path_allowlisted
+    # Matches the exact leak file
+    assert is_path_allowlisted("tests/fixtures/secret.py", suggestions) is True
+    # Does NOT match sibling paths like <parent>/.git/secret or other directories
+    assert is_path_allowlisted("tests/.git/secret", suggestions) is False
+    assert is_path_allowlisted("tests/other/secret.py", suggestions) is False
+
+
+def test_scan_report_to_markdown_handles_literal_braces():
+    report = ScanReport(
+        target_dir=".",
+        total_files=1,
+        total_lines=5,
+        total_chunks=1,
+        leaks=[
+            DissectionResult(
+                offending_file="src/code.py",
+                start_line=1,
+                end_line=1,
+                snippet='{"user": "{name}", "token": "secret_val"}',
+                probability=0.95,
+            )
+        ],
+    )
+    md = report.to_markdown()
+    assert "src/code.py" in md
+
+
+def test_scanner_allowlist_patterns():
     scanner = Scanner(
         config=LatchConfig(),
         allowlist_paths=["fixtures/*", "**/mock/**", "secret_template.py"],
@@ -288,4 +339,21 @@ def test_scanner_allowlist_patterns(tmp_path: Path):
     assert scanner._is_path_allowlisted("dir/secret_template.py") is True
     # Non-allowlisted file
     assert scanner._is_path_allowlisted("src/main.py") is False
+
+    # Negative cases (R7-2: segment-anchored, no substring matches)
+    scanner_adv = Scanner(
+        config=LatchConfig(),
+        allowlist_paths=["src/*", "app/config", "fixtures", "**/bar/**"],
+    )
+    assert scanner_adv._is_path_allowlisted("notsrc/x.py") is False
+    assert scanner_adv._is_path_allowlisted("esrc/secret.py") is False
+    assert scanner_adv._is_path_allowlisted("myapp/config/secret.env") is False
+    assert scanner_adv._is_path_allowlisted("app/configx/y.py") is False
+    assert scanner_adv._is_path_allowlisted("webapp/config/z.py") is False
+
+    # Positive cases
+    assert scanner_adv._is_path_allowlisted("src/x.py") is True
+    assert scanner_adv._is_path_allowlisted("app/config/secret.env") is True
+    assert scanner_adv._is_path_allowlisted("fixtures/foo") is True
+    assert scanner_adv._is_path_allowlisted("foo/bar/baz") is True
 

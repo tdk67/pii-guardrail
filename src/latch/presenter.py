@@ -129,22 +129,28 @@ class Presenter:
         latency_ms: int,
         mode: str,
         target_dir: str,
+        errored_chunks: int = 0,
     ) -> str:  # latch:ignore
         """Renders whole-codebase scan summary banner."""  # latch:ignore
         check_sym = "✓" if self.supports_unicode else "[OK]"  # latch:ignore
         cross_sym = "✗" if self.supports_unicode else "[FAIL]"  # latch:ignore
-        status_line = (  # latch:ignore
-            self._c(self.GREEN + self.BOLD, f"{check_sym} Latch Scan: Clean")  # latch:ignore
-            if leaks_count == 0  # latch:ignore
-            else self._c(self.RED + self.BOLD, f"{cross_sym} Latch Scan: {leaks_count} Leak(s) Detected")  # latch:ignore
-        )  # latch:ignore
+        if leaks_count == 0 and errored_chunks == 0:
+            status_line = self._c(self.GREEN + self.BOLD, f"{check_sym} Latch Scan: Clean")
+            result_str = "PASS - No sensitive PII or credentials detected."
+        elif errored_chunks > 0 and leaks_count == 0:
+            status_line = self._c(self.RED + self.BOLD, f"{cross_sym} Latch Scan: Failed ({errored_chunks} chunk(s) errored)")
+            result_str = f"FAIL - {errored_chunks} chunk(s) failed during evaluation (Fail-Closed)."
+        else:
+            err_suffix = f", {errored_chunks} errored" if errored_chunks > 0 else ""
+            status_line = self._c(self.RED + self.BOLD, f"{cross_sym} Latch Scan: {leaks_count} Leak(s) Detected{err_suffix}")
+            result_str = f"FAIL - {leaks_count} sensitive leak(s) isolated."
         mode_label = "daemon" if mode == "daemon" else "in-process"  # latch:ignore
         return (  # latch:ignore
             f"\n{status_line}\n"  # latch:ignore
             f"  Target:     {target_dir}\n"  # latch:ignore
             f"  Inspected:  {total_files} files, {total_lines:,} lines across {total_chunks} chunks\n"  # latch:ignore
             f"  Execution:  {latency_ms:,}ms ({mode_label})\n"  # latch:ignore
-            f"  Result:     {'PASS - No sensitive PII or credentials detected.' if leaks_count == 0 else f'FAIL - {leaks_count} sensitive leak(s) isolated.'}"  # latch:ignore
+            f"  Result:     {result_str}"  # latch:ignore
         )  # latch:ignore
 
     def format_error(self, title: str, error_detail: str, action: str, context: str = "Commit") -> str:  # latch:ignore

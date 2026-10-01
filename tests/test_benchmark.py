@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import MagicMock
-from latch.benchmark import BenchmarkMetrics, BenchmarkResult, BenchmarkRunner, SampleResult
+from latch.benchmark import BenchmarkMetrics, BenchmarkRunner, SampleResult
 from latch.config import LatchConfig
 from latch.engine import EvaluationResult
 
