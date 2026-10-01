@@ -325,7 +325,6 @@ class DissectionResult:
 ```text
 <project-root>/
 ├── config.json                 # Operational parameters (thresholds, token limits, port)
-├── .env.example                # Clean environment template (no secrets required for local)
 ├── requirements.txt            # Python dependencies (torch, transformers, etc.)
 ├── README.md                   # Installation, daemon guide, and manual hook documentation
 ├── devpost/                    # Planning artifacts
