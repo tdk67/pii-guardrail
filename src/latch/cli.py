@@ -66,7 +66,7 @@ def run_check(
                 print(clean_msg)
             return 0
 
-        # Two-tier runner: routes to warm daemon (sub-50ms) or falls back in-process
+        # Two-tier runner: routes to warm daemon (~1-2s warm inference) or falls back in-process
         if client is not None:
             active_client = client
         elif engine is not None:
