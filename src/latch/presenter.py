@@ -163,3 +163,33 @@ class Presenter:
         ]
         return "\n".join(details)
 
+    def format_whitelist_suggestions(self, suggested_patterns: List[str]) -> str:
+        """Formats actionable allowlist/whitelist suggestions for detected leaks."""
+        if not suggested_patterns:
+            return ""
+        bulb = "💡" if self.supports_unicode else "[TIP]"
+        lines = [
+            f"\n{self._c(self.CYAN + self.BOLD, f'{bulb} Whitelist Suggestions:')}",
+            "  To exempt false positives or mock fixtures in future scans, consider adding:",
+            '  "allowlist_paths": [',
+        ]
+        for pat in suggested_patterns:
+            lines.append(f'      "{pat}",')
+        lines.extend([
+            "  ] to your config.json,",
+            "  or rerun scan with: --allowlist " + " ".join(f'"{p}"' for p in suggested_patterns[:2]),
+            "  or exempt specific lines with '# latch:ignore' or '<!-- latch:ignore -->'.",
+        ])
+        return "\n".join(lines)
+
+    def format_report_saved(self, md_path: str, json_path: Optional[str] = None) -> str:
+        """Formats persistent scan report destination banner."""
+        doc_sym = "📄" if self.supports_unicode else "[REPORT]"
+        lines = [
+            f"\n{self._c(self.CYAN + self.BOLD, f'{doc_sym} Scan Report Saved:')}",
+            f"  Markdown: file:///{md_path.replace(os.sep, '/')}",
+        ]
+        if json_path:
+            lines.append(f"  JSON:     file:///{json_path.replace(os.sep, '/')}")
+        return "\n".join(lines)
+

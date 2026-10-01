@@ -38,3 +38,20 @@ def test_format_error():
     assert "Fail-Closed" in out
     assert "Weights missing" in out
     assert "latch download-model" in out
+
+
+def test_format_whitelist_suggestions():
+    presenter = Presenter()
+    out = presenter.format_whitelist_suggestions(["tests/fixtures/*", "**/mock/**"])
+    assert "Whitelist Suggestions" in out
+    assert '"tests/fixtures/*"' in out
+    assert '"**/mock/**"' in out
+
+
+def test_format_report_saved():
+    presenter = Presenter()
+    out = presenter.format_report_saved("C:/reports/scan.md", "C:/reports/scan.json")
+    assert "Scan Report Saved" in out
+    assert "file:///C:/reports/scan.md" in out
+    assert "file:///C:/reports/scan.json" in out
+

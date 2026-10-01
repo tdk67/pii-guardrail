@@ -24,18 +24,19 @@ def test_client_fallback_when_daemon_offline():
     assert client.last_mode == "in_process"
 
 
-def test_client_routes_to_live_daemon():
+def test_client_routes_to_live_daemon(tmp_path):
     cfg = LatchConfig(daemon_port=5159, daemon_probe_timeout_ms=50)
     mock_engine = MagicMock()
     mock_engine.evaluate.return_value = EvaluationResult(probability=0.93, latency_ms=15, request_id="r1")
     
-    server = DaemonServer(cfg, engine=mock_engine)
+    token_file = str(tmp_path / "daemon.token")
+    server = DaemonServer(cfg, engine=mock_engine, token_file=token_file)
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
     time.sleep(0.1)
 
     try:
-        client = Client(config=cfg)
+        client = Client(config=cfg, token_file=token_file)
         assert client.is_daemon_alive() is True
 
         result = client.evaluate("=== File: leak.py ===\n+ password = 'abc'", request_id="r1")

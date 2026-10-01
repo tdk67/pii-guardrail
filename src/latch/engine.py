@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Optional
 from latch.config import DEFAULT_PII_THRESHOLD, LatchConfig
 
@@ -32,6 +32,7 @@ class EvaluationResult:
     latency_ms: int
     request_id: str = ""
     error: Optional[str] = None
+    timings: Dict[str, float] = field(default_factory=dict)
 
     def is_clean(self, threshold: float = DEFAULT_PII_THRESHOLD) -> bool:
         """Returns True if P(PII) is below the refusal threshold."""
@@ -45,6 +46,7 @@ class JuliaEngine:
         self.config = config
         self._model = None
         self._initialized = False
+        self._criteria: Optional[Dict[str, str]] = None
 
     def load(self) -> None:
         """Load Julia-1 model into memory."""
@@ -89,6 +91,12 @@ class JuliaEngine:
 
         try:
             criteria = self._load_criteria()
+            
+            t_tok0 = time.perf_counter()
+            token_count = len(self._model.tokenizer(state, add_special_tokens=False)["input_ids"]) if hasattr(self._model, "tokenizer") else len(state.split())
+            t_tok = (time.perf_counter() - t_tok0) * 1000
+
+            t_fwd0 = time.perf_counter()
             res = self._model.predict(
                 state=state,
                 questions={
@@ -99,18 +107,30 @@ class JuliaEngine:
                     }
                 },
             )
+            t_fwd = (time.perf_counter() - t_fwd0) * 1000
             prob = float(res.get("answers", {}).get("pii_check", {}).get("noul", 0.0))
             latency = int((time.perf_counter() - start_time) * 1000)
+            
+            timings = {
+                "tokens": token_count,
+                "tokenize_ms": t_tok,
+                "forward_ms": t_fwd,
+                "scoring_ms": max(0.1, latency - t_tok - t_fwd),
+            }
             return EvaluationResult(
                 probability=prob,
                 latency_ms=max(1, latency),
                 request_id=request_id,
+                timings=timings,
             )
         except Exception as err:
             raise JuliaEngineError(f"Julia-1 inference failed: {err}") from err
 
     def _load_criteria(self) -> Dict[str, str]:
         """Loads criteria definitions mapping 'false' and 'true' keys."""
+        if self._criteria is not None:
+            return self._criteria
+
         path = getattr(self.config, "noul_criteria_path", None)
         if not path or not os.path.exists(path):
             raise JuliaEngineError(f"Criteria definitions file not found at: {path}")
@@ -119,7 +139,8 @@ class JuliaEngine:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if "criteria" in data and isinstance(data["criteria"], dict):
-                    return data["criteria"]
+                    self._criteria = data["criteria"]
+                    return self._criteria
                 raise JuliaEngineError("Missing 'criteria' object in criteria file.")
         except Exception as err:
             raise JuliaEngineError(f"Failed to load criteria file: {err}") from err

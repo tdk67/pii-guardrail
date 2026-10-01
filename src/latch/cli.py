@@ -267,6 +267,9 @@ def run_scan(
     config: Optional[LatchConfig] = None,
     client: Optional[Any] = None,
     scanner: Optional[Any] = None,
+    report_path: Optional[str] = None,
+    allowlist_paths: Optional[Sequence[str]] = None,
+    ignored_dirs: Optional[Sequence[str]] = None,
 ) -> int:
     """Scan an entire codebase directory for PII and leaked credentials."""
     cfg = config or get_config()
@@ -277,11 +280,24 @@ def run_scan(
     print(f"Scanning codebase at '{target_abs}' with Julia-1...")
     try:
         from latch.scanner import Scanner
-        scan_engine = scanner or Scanner(config=cfg, client=client)
+        scan_engine = scanner or Scanner(
+            config=cfg,
+            client=client,
+            allowlist_paths=allowlist_paths,
+            ignored_dirs=ignored_dirs,
+        )
+
+        is_daemon = scan_engine.client.is_daemon_alive()
+        if is_daemon:
+            print(f"[LATCH SCAN] Engine: Warm Daemon (127.0.0.1:{cfg.daemon_port}) [High Throughput]")
+        else:
+            print(f"[LATCH SCAN] Engine: In-Process Fallback (Cold Model, ~2s/chunk)")
+            print("             Tip: Start the daemon with 'python -m latch.cli daemon start' for up to 10x faster scans.")
 
         def on_progress(curr: int, tot: int) -> None:
             if sys.stdout.isatty():
-                print(f"\r  Evaluating chunk {curr}/{tot}...", end="", flush=True)
+                mode_tag = "daemon" if scan_engine.client.last_mode == "daemon" else "in-process"
+                print(f"\r  Evaluating chunk {curr}/{tot} [{mode_tag}]...", end="", flush=True)
 
         report = scan_engine.scan(
             target_dir=path,
@@ -289,10 +305,12 @@ def run_scan(
             threshold=threshold,
             max_chunk_tokens=max_chunk_tokens,
             progress_callback=on_progress,
+            allowlist_paths=allowlist_paths,
+            ignored_dirs=ignored_dirs,
         )
 
         if sys.stdout.isatty() and report.total_chunks > 0:
-            print("\r" + " " * 40 + "\r", end="")
+            print("\r" + " " * 50 + "\r", end="")
 
         for leak in report.leaks:
             alert = pres.format_blocked(  # latch:ignore
@@ -316,6 +334,20 @@ def run_scan(
             target_dir=report.target_dir,
         )
         print(summary)
+
+        # Save persistent scan reports (markdown and json)
+        try:
+            md_path, json_path = report.save_reports(report_path)
+            print(pres.format_report_saved(str(md_path), str(json_path)))
+        except Exception as err:
+            print(f"[WARN] Failed to save scan report: {err}", file=sys.stderr)
+
+        # Output allowlist suggestions if leaks detected
+        if not report.is_clean:
+            suggestions = report.get_suggested_allowlists()
+            if suggestions:
+                print(pres.format_whitelist_suggestions(suggestions))
+
         return 0 if report.is_clean else 1
     except JuliaEngineError as err:
         err_msg = pres.format_error(  # latch:ignore
@@ -335,6 +367,9 @@ def run_scan(
         )
         print(err_msg, file=sys.stderr)
         return 1
+    finally:
+        if "scan_engine" in locals() and hasattr(scan_engine, "client") and hasattr(scan_engine.client, "close"):
+            scan_engine.client.close()
 
 
 def main(args: Optional[list[str]] = None) -> None:
@@ -354,6 +389,9 @@ def main(args: Optional[list[str]] = None) -> None:
     scan_parser.add_argument("--threshold", type=float, default=None, help="Custom PII threshold (default from config: 0.65)")
     scan_parser.add_argument("--ext", type=str, default=None, help="Comma-separated file extensions to include (e.g. .py,.ts,.js,.json)")
     scan_parser.add_argument("--max-chunk-tokens", type=int, default=None, help="Maximum tokens per chunk (default from config: 750)")
+    scan_parser.add_argument("--ignore-dir", action="append", default=[], help="Directory name or pattern to ignore")
+    scan_parser.add_argument("--allowlist", action="append", default=[], help="File or path pattern to allowlist")
+    scan_parser.add_argument("--report", type=str, default=None, help="Custom output path for scan report (.md and .json)")
 
     # Command: download-model
     subparsers.add_parser("download-model", help="Download open Julia-1 model weights from Hugging Face")
@@ -382,6 +420,9 @@ def main(args: Optional[list[str]] = None) -> None:
             threshold=parsed.threshold,
             ext=parsed.ext,
             max_chunk_tokens=parsed.max_chunk_tokens,
+            report_path=parsed.report,
+            allowlist_paths=parsed.allowlist,
+            ignored_dirs=parsed.ignore_dir,
         )
         sys.exit(exit_code)
     elif parsed.command == "download-model":

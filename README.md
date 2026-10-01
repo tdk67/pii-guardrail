@@ -113,11 +113,18 @@ python -m latch.cli scan ./src --ext .py,.ts,.json --threshold 0.70
 
 # Customize batch chunk size (default: 750 tokens)
 python -m latch.cli scan ./backend --max-chunk-tokens 1000
+
+# Exempt specific directories or wildcards at runtime
+python -m latch.cli scan . --ignore-dir fixtures --allowlist "tests/fixtures/*"
+
+# Export report to a custom file
+python -m latch.cli scan . --report ./reports/audit.md
 ```
 
 - **Automatic Noise Pruning**: Silently skips `.git`, `.venv`, `node_modules`, `__pycache__`, `models/julia-1`, and binary files.
+- **Persistent Audit Reports**: Automatically generates `.latch/reports/scan_report.md` (Markdown with clickable file/line links, snippets, and summary tables) and `scan_report.json`.
+- **Intelligent Whitelist Suggestions**: When leaks are detected in test fixtures or mock directories, Latch analyzes the paths and displays actionable configuration snippets to add to `config.json`.
 - **Adaptive Dissection**: Localizes findings down to the exact file and line range using binary search.
-- **Allowlist & Inline Pragmas**: Honors `allowlist_paths` from `config.json` and `# latch:ignore` inline comments.
 - **Warm Daemon Acceleration**: Runs in hundreds of milliseconds when the warm daemon is active.
 
 ### Run Background Daemon for Sub-50ms Inference
@@ -137,6 +144,120 @@ python -m latch.daemon &
 # Stop daemon cleanly
 .\scripts\windows\stop-daemon.ps1
 ```
+
+---
+
+## Observability, Profiling & Dashboards
+
+The warm background daemon is instrumented with an in-memory, sub-millisecond phase profiler (`src/latch/metrics.py`) that decomposes every request into granular execution phases:
+- **`read_ms`**: HTTP request body reading and decoding (< 0.05 ms)
+- **`tokenize_ms`**: BPE subword tokenization (~3 ms)
+- **`prep_ms`**: Tensor preparation and memory allocation (< 0.01 ms)
+- **`forward_ms`**: PyTorch neural network forward pass through Julia-1 (~200–1,500 ms on CPU, 99.7% of total time)
+- **`scoring_ms`**: Noul binary logit extraction and softmax (< 0.1 ms)
+- **`write_ms`**: JSON response serialization and network transmission (< 0.5 ms)
+- **`total_ms`**: End-to-end request duration
+
+### 1. Instant Built-in Web Dashboard (Zero Setup)
+
+Whenever the daemon is running, open your browser to:
+```
+http://127.0.0.1:5138/dashboard
+```
+
+This serves a standalone, lightweight monitoring interface built into Latch that visualizes:
+- **Live throughput**: Requests/sec and Token/sec gauges.
+- **Rolling Percentiles**: Cards showing `p50`, `p90`, `p99`, `avg`, `min`, and `max` latency.
+- **Stacked Execution Phase Bars**: Color-coded breakdown showing exactly where milliseconds are spent.
+- **Recent Requests Table**: Log of recent evaluations with request IDs, token counts, probabilities, and timestamps.
+- **Live Auto-Refresh**: Polls `GET /v1/stats` every 2 seconds without external dependencies.
+
+### 2. Telemetry Endpoints
+
+- **JSON Telemetry**: `GET http://127.0.0.1:5138/v1/stats`
+  ```bash
+  curl http://127.0.0.1:5138/v1/stats
+  ```
+- **Prometheus Metrics**: `GET http://127.0.0.1:5138/metrics`
+  ```bash
+  curl http://127.0.0.1:5138/metrics
+  ```
+  Exposes gauges and counters for:
+  - `latch_daemon_uptime_seconds`
+  - `latch_daemon_requests_total`, `latch_daemon_tokens_total`, `latch_daemon_errors_total`
+  - `latch_daemon_throughput_reqs_per_sec`, `latch_daemon_throughput_tokens_per_sec`
+  - `latch_phase_duration_ms{phase="forward",stat="p50|p90|p99|avg"}`
+
+---
+
+## How to Install and Use Grafana to Visualize Metrics
+
+To set up visual monitoring with Prometheus and Grafana:
+
+### Step 1: Run Prometheus
+
+1. Create a minimal `prometheus.yml` configuration:
+   ```yaml
+   global:
+     scrape_interval: 2s
+     evaluation_interval: 2s
+
+   scrape_configs:
+     - job_name: "latch-daemon"
+       metrics_path: "/metrics"
+       static_configs:
+         - targets: ["127.0.0.1:5138"]
+   ```
+
+2. Start Prometheus:
+   - **Using Docker**:
+     ```bash
+     docker run -d --name prometheus -p 9090:9090 -v ${PWD}/prometheus.yml:/etc/prometheus/prometheus.yml prom/prometheus
+     ```
+   - **Standalone Binary**:
+     Download from [prometheus.io/download](https://prometheus.io/download/) and run:
+     ```bash
+     ./prometheus --config.file=prometheus.yml
+     ```
+
+3. Open `http://localhost:9090/targets` to verify Prometheus is scraping `http://127.0.0.1:5138/metrics` with status **UP**.
+
+### Step 2: Run Grafana
+
+1. Start Grafana:
+   - **Using Docker**:
+     ```bash
+     docker run -d --name grafana -p 3000:3000 grafana/grafana
+     ```
+   - **Standalone Binary**:
+     Download from [grafana.com/grafana/download](https://grafana.com/grafana/download/) and start the server.
+
+2. Open Grafana in your browser at `http://localhost:3000` (default credentials: `admin` / `admin`).
+
+### Step 3: Add Prometheus Data Source in Grafana
+
+1. In Grafana, navigate to **Connections** > **Data Sources** > **Add data source**.
+2. Select **Prometheus**.
+3. Set the server URL:
+   - Local: `http://127.0.0.1:9090`
+   - Docker container to host: `http://host.docker.internal:9090`
+4. Click **Save & test** to verify connectivity.
+
+### Step 4: Import the Prebuilt Latch Dashboard
+
+1. In Grafana, navigate to **Dashboards** > **New** > **Import**.
+2. Click **Upload dashboard JSON file** and select:
+   ```
+   dashboards/latch_daemon_grafana.json
+   ```
+3. Select your Prometheus data source from the dropdown and click **Import**.
+
+### What You Will See in Grafana:
+- **Phase Breakdown Heatmap & Stacked Time Series**: Visually verify that the neural network forward pass (`forward_ms`) accounts for >99.5% of total latency while tokenization, IPC, and scoring take < 0.5%.
+- **Percentile Latency Tracker**: Live graphs for p50, p90, and p99 request duration.
+- **Throughput Metrics**: Live tokens/sec and evaluations/sec gauges.
+- **Hardware Bottleneck Verification**: Provides empirical confirmation of whether computation has reached the CPU memory bandwidth threshold.
+
 
 ### Run the Test Suite
 

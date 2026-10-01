@@ -20,19 +20,41 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Optional
-from latch.config import LatchConfig, get_config
+from latch.config import PACKAGE_ROOT, LatchConfig, get_config
 from latch.engine import EvaluationResult, JuliaEngine
+from latch.metrics import DaemonMetricsTracker, PhaseTimings
+
+
+def find_latch_dir() -> str:
+    """Resolve .latch directory anchored to current directory or git root."""
+    if os.path.isdir(".latch"):
+        return os.path.abspath(".latch")
+    try:
+        import subprocess
+        git_root = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=1.0,
+        ).strip()
+        candidate = os.path.join(git_root, ".latch")
+        if os.path.isdir(candidate):
+            return candidate
+    except Exception:
+        pass
+    return os.path.abspath(".latch")
 
 
 def resolve_token_file(pid_file: Optional[str] = None) -> str:
     """Resolve daemon authentication token filepath."""
     if pid_file:
         return os.path.join(os.path.dirname(os.path.abspath(pid_file)), "daemon.token")
-    return os.path.join(".latch", "daemon.token")
+    return os.path.join(find_latch_dir(), "daemon.token")
 
 
 class DaemonRequestHandler(BaseHTTPRequestHandler):
     """HTTP request handler for daemon IPC endpoints with Host and Token verification."""
+    protocol_version = "HTTP/1.1"
 
     def log_message(self, format: str, *args: Any) -> None:
         """Suppress standard HTTP server access logging to keep console clean."""
@@ -54,10 +76,55 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         """Handle GET requests (e.g. /v1/health)."""
         if not self._validate_host():
+            body = b'{"error": "Forbidden: invalid Host header"}'
             self.send_response(403)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(b'{"error": "Forbidden: invalid Host header"}')
+            self.wfile.write(body)
+            return
+
+        if self.path == "/metrics":
+            try:
+                metrics_tracker = getattr(self.server, "metrics_tracker", None)
+                output = metrics_tracker.to_prometheus().encode("utf-8") if metrics_tracker else b"# No metrics tracker\n"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+                self.send_header("Content-Length", str(len(output)))
+                self.end_headers()
+                self.wfile.write(output)
+            except Exception:
+                pass
+            return
+
+        if self.path == "/v1/stats":
+            try:
+                metrics_tracker = getattr(self.server, "metrics_tracker", None)
+                stats = metrics_tracker.get_summary() if metrics_tracker else {}
+                output = json.dumps(stats).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(output)))
+                self.end_headers()
+                self.wfile.write(output)
+            except Exception:
+                pass
+            return
+
+        if self.path == "/dashboard":
+            try:
+                tpl_path = os.path.join(PACKAGE_ROOT, "templates", "dashboard.html")
+                if not os.path.exists(tpl_path):
+                    tpl_path = os.path.join("templates", "dashboard.html")
+                with open(tpl_path, "rb") as f:
+                    output = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(output)))
+                self.end_headers()
+                self.wfile.write(output)
+            except Exception:
+                pass
             return
 
         if self.path == "/v1/health":
@@ -73,43 +140,56 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
                         hashlib.sha256,
                     ).hexdigest()
 
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
                 response = {
                     "status": "ready",
                     "model": "Julia-1",
                     "authenticated": is_auth,
                     "challenge_response": challenge_resp,
                 }
-                self.wfile.write(json.dumps(response).encode("utf-8"))
+                body = json.dumps(response).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
             except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, OSError):
                 pass
         else:
             try:
+                body = b'{"error": "Not Found"}'
                 self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
+                self.wfile.write(body)
             except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, OSError):
                 pass
 
     def do_POST(self) -> None:
         """Handle POST requests (/v1/evaluate, /v1/shutdown)."""
         if not self._validate_host():
+            body = b'{"error": "Forbidden: invalid Host header"}'
             self.send_response(403)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(b'{"error": "Forbidden: invalid Host header"}')
+            self.wfile.write(body)
             return
 
         if not self._validate_token():
+            body = b'{"error": "Unauthorized: invalid or missing X-Latch-Token"}'
             self.send_response(403)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(b'{"error": "Unauthorized: invalid or missing X-Latch-Token"}')
+            self.wfile.write(body)
             return
 
+        t_req_start = time.perf_counter()
         content_length = int(self.headers.get("Content-Length", 0))
+        t_read_start = time.perf_counter()
         body = self.rfile.read(content_length)
+        t_read_ms = (time.perf_counter() - t_read_start) * 1000
 
         if self.path == "/v1/evaluate":
             try:
@@ -120,40 +200,70 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
                 engine: JuliaEngine = self.server.engine  # type: ignore
                 result: EvaluationResult = engine.evaluate(state, request_id=request_id)
 
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
                 response = {
                     "request_id": result.request_id,
                     "probability": result.probability,
                     "latency_ms": result.latency_ms,
+                    "timings": getattr(result, "timings", {}),
                     "error": None,
                 }
-                self.wfile.write(json.dumps(response).encode("utf-8"))
-            except Exception as err:
-                self.send_response(500)
+                resp_bytes = json.dumps(response).encode("utf-8")
+                t_write_start = time.perf_counter()
+                self.send_response(200)
                 self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(resp_bytes)))
                 self.end_headers()
+                self.wfile.write(resp_bytes)
+                t_write_ms = (time.perf_counter() - t_write_start) * 1000
+
+                metrics_tracker = getattr(self.server, "metrics_tracker", None)
+                if metrics_tracker:
+                    timings = getattr(result, "timings", {})
+                    metrics_tracker.record(PhaseTimings(
+                        request_id=result.request_id,
+                        tokens=timings.get("tokens", len(state.split())),
+                        read_ms=round(t_read_ms, 2),
+                        tokenize_ms=round(timings.get("tokenize_ms", 0.0), 2),
+                        prep_ms=round(timings.get("prep_ms", 0.0), 2),
+                        forward_ms=round(timings.get("forward_ms", result.latency_ms), 2),
+                        scoring_ms=round(timings.get("scoring_ms", 0.0), 2),
+                        write_ms=round(t_write_ms, 2),
+                        total_ms=round((time.perf_counter() - t_req_start) * 1000, 2),
+                        probability=result.probability,
+                        status_code=200,
+                    ))
+            except Exception as err:
                 response = {
                     "request_id": data.get("request_id", "") if "data" in locals() else "",
                     "probability": 1.0,  # Fail-closed on error
                     "latency_ms": 0,
                     "error": str(err),
                 }
-                self.wfile.write(json.dumps(response).encode("utf-8"))
+                resp_bytes = json.dumps(response).encode("utf-8")
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(resp_bytes)))
+                self.end_headers()
+                self.wfile.write(resp_bytes)
 
         elif self.path == "/v1/shutdown":
+            body = json.dumps({"status": "shutting_down"}).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "shutting_down"}).encode("utf-8"))
+            self.wfile.write(body)
             
             # Asynchronously stop server in separate thread
             import threading
             threading.Thread(target=self.server.shutdown, daemon=True).start()
         else:
+            body = b'{"error": "Not Found"}'
             self.send_response(404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
+            self.wfile.write(body)
 
 
 class DaemonServer(ThreadingHTTPServer):
@@ -173,9 +283,10 @@ class DaemonServer(ThreadingHTTPServer):
         self.engine = engine or JuliaEngine(config)
         self.token = token or secrets.token_hex(32)
         self.token_file = token_file or resolve_token_file()
-        self._save_token()
+        self.metrics_tracker = DaemonMetricsTracker()
         server_address = (bind_host, config.daemon_port)
         super().__init__(server_address, DaemonRequestHandler)
+        self._save_token()
 
     def _save_token(self) -> None:
         """Write secret token to token_file with restricted permissions."""
@@ -190,10 +301,13 @@ class DaemonServer(ThreadingHTTPServer):
                 f.write(self.token)
 
     def server_close(self) -> None:
-        """Remove daemon token file on shutdown."""
+        """Remove daemon token file on shutdown only if it matches our active token."""
         try:
             if os.path.exists(self.token_file):
-                os.remove(self.token_file)
+                with open(self.token_file, "r", encoding="utf-8") as f:
+                    disk_token = f.read().strip()
+                if secrets.compare_digest(disk_token, self.token):
+                    os.remove(self.token_file)
         except OSError:
             pass
         super().server_close()
@@ -242,7 +356,7 @@ class DaemonManager:
         pid_file: Optional[str] = None,
     ) -> None:
         self.config = config or get_config()
-        self.pid_file = pid_file or os.path.join(".latch", "daemon.pid")
+        self.pid_file = pid_file or os.path.join(find_latch_dir(), "daemon.pid")
         self.token_file = resolve_token_file(self.pid_file)
 
     def save_pid(self, pid: int) -> None:
@@ -387,7 +501,18 @@ class DaemonManager:
             pid = self.get_pid()
             print(f"[OK] Latch daemon: RUNNING on 127.0.0.1:{self.config.daemon_port} (PID: {pid or 'active'})")
         else:
-            print(f"[INFO] Latch daemon: STOPPED (port {self.config.daemon_port} not responding)")
+            port_open = False
+            try:
+                import socket
+                with socket.create_connection(("127.0.0.1", self.config.daemon_port), timeout=0.1):
+                    port_open = True
+            except (OSError, ConnectionRefusedError):
+                pass
+            if port_open:
+                print(f"[WARN] Port {self.config.daemon_port} is listening, but daemon authentication token is missing or invalid.")
+                print(f"       Restart daemon with 'python -m latch.cli daemon stop' and 'start'.")
+            else:
+                print(f"[INFO] Latch daemon: STOPPED (port {self.config.daemon_port} not responding)")
 
 
 def run_daemon_process() -> None:
@@ -402,6 +527,7 @@ def run_daemon_process() -> None:
     cfg = get_config()
     try:
         server = DaemonServer(cfg)
+        DaemonManager(cfg).save_pid(os.getpid())
         server.engine.load()
         # Warm-up inference: pay one-time lazy torch/tokenizer init costs now so the
         # first real request does not exceed the client evaluation timeout (VPS finding).

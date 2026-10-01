@@ -94,3 +94,26 @@ def test_run_check_wires_state_builder_prompt_delimiters():
     # Adversarial instruction must be neutralized
     assert "[INJECTION_ATTEMPT_NEUTRALIZED]" in prompt
 
+
+def test_cli_scan_arguments(tmp_path):
+    from latch.cli import main
+    with patch("latch.cli.run_scan") as mock_scan, patch("sys.exit") as mock_exit:
+        mock_scan.return_value = 0
+        main([
+            "scan",
+            str(tmp_path),
+            "--threshold", "0.75",
+            "--allowlist", "fixtures/*",
+            "--allowlist", "**/mocks/**",
+            "--ignore-dir", "custom_build",
+            "--report", str(tmp_path / "rep.md"),
+        ])
+        mock_scan.assert_called_once()
+        kwargs = mock_scan.call_args[1]
+        assert kwargs["path"] == str(tmp_path)
+        assert kwargs["threshold"] == 0.75
+        assert kwargs["allowlist_paths"] == ["fixtures/*", "**/mocks/**"]
+        assert kwargs["ignored_dirs"] == ["custom_build"]
+        assert kwargs["report_path"] == str(tmp_path / "rep.md")
+
+

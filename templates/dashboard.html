@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Latch Daemon - Real-Time Observability & Profiler</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card-bg: #161b22;
+      --border: #30363d;
+      --text: #c9d1d9;
+      --text-muted: #8b949e;
+      --accent: #58a6ff;
+      --green: #2ea043;
+      --red: #f85149;
+      --purple: #bc8cff;
+      --orange: #d29922;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      padding: 24px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .header-title h1 { font-size: 24px; color: #fff; display: flex; align-items: center; gap: 10px; }
+    .status-badge {
+      font-size: 13px;
+      padding: 4px 10px;
+      border-radius: 12px;
+      background: rgba(46, 160, 67, 0.2);
+      color: var(--green);
+      font-weight: 600;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .card-title { font-size: 12px; text-transform: uppercase; color: var(--text-muted); font-weight: 600; margin-bottom: 8px; }
+    .card-value { font-size: 28px; font-weight: 700; color: #fff; }
+    .card-unit { font-size: 14px; font-weight: normal; color: var(--text-muted); }
+    .main-grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 20px;
+    }
+    @media (max-width: 900px) { .main-grid { grid-template-columns: 1fr; } }
+    .panel {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .panel h2 { font-size: 16px; margin-bottom: 16px; color: #fff; display: flex; justify-content: space-between; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+    th { color: var(--text-muted); font-weight: 600; }
+    .bar-container { display: flex; height: 24px; border-radius: 4px; overflow: hidden; background: #21262d; margin-top: 10px; }
+    .bar-seg { height: 100%; transition: width 0.3s ease; }
+    .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; font-size: 12px; }
+    .legend-item { display: flex; align-items: center; gap: 6px; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 2px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-title">
+      <h1>🛡️ Latch Daemon Live Profiler</h1>
+      <span class="status-badge" id="daemon-status">ONLINE (127.0.0.1:5138)</span>
+    </div>
+    <div style="font-size: 13px; color: var(--text-muted);">
+      Auto-refreshing every 2s | <a href="/metrics" target="_blank" style="color: var(--accent); text-decoration: none;">Prometheus /metrics</a>
+    </div>
+  </header>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-title">Total Requests</div>
+      <div class="card-value" id="val-requests">-</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Tokens Evaluated</div>
+      <div class="card-value" id="val-tokens">-</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Throughput (Reqs/s)</div>
+      <div class="card-value" id="val-req-rate">-</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Throughput (Tokens/s)</div>
+      <div class="card-value" id="val-token-rate">-</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Median Latency (p50)</div>
+      <div class="card-value" id="val-p50" style="color: var(--accent);">-</div>
+    </div>
+  </div>
+
+  <div class="main-grid">
+    <div>
+      <div class="panel">
+        <h2>Latency Breakdown by Phase (p50 ms)</h2>
+        <div class="bar-container" id="phase-bar">
+          <div class="bar-seg" id="seg-forward" style="background: var(--accent); width: 0%;" title="Model Forward"></div>
+          <div class="bar-seg" id="seg-tokenize" style="background: var(--purple); width: 0%;" title="Tokenize"></div>
+          <div class="bar-seg" id="seg-prep" style="background: var(--orange); width: 0%;" title="Tensor Prep"></div>
+          <div class="bar-seg" id="seg-scoring" style="background: var(--green); width: 0%;" title="Scoring"></div>
+          <div class="bar-seg" id="seg-ipc" style="background: #8b949e; width: 0%;" title="IPC Socket"></div>
+        </div>
+        <div class="legend">
+          <div class="legend-item"><div class="legend-dot" style="background: var(--accent);"></div> PyTorch Forward (<span id="lbl-forward">-</span>ms)</div>
+          <div class="legend-item"><div class="legend-dot" style="background: var(--purple);"></div> Tokenization (<span id="lbl-tokenize">-</span>ms)</div>
+          <div class="legend-item"><div class="legend-dot" style="background: var(--orange);"></div> Tensor Prep (<span id="lbl-prep">-</span>ms)</div>
+          <div class="legend-item"><div class="legend-dot" style="background: var(--green);"></div> Softmax Scoring (<span id="lbl-scoring">-</span>ms)</div>
+          <div class="legend-item"><div class="legend-dot" style="background: #8b949e;"></div> IPC / Serialization (<span id="lbl-ipc">-</span>ms)</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Phase Percentile Latencies (ms)</h2>
+        <table>
+          <thead>
+            <tr><th>Phase</th><th>Min</th><th>p50 (Median)</th><th>p90</th><th>p99</th><th>Max</th><th>Avg</th></tr>
+          </thead>
+          <tbody id="phases-table-body">
+            <tr><td colspan="7" style="text-align: center; color: var(--text-muted);">Waiting for telemetry data...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel">
+        <h2>Recent Evaluation Requests</h2>
+        <table>
+          <thead>
+            <tr><th>Request</th><th>Tokens</th><th>Model</th><th>Total</th><th>Prob</th></tr>
+          </thead>
+          <tbody id="recent-requests-body">
+            <tr><td colspan="5" style="text-align: center; color: var(--text-muted);">No requests yet</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function updateStats() {
+      try {
+        const res = await fetch('/v1/stats');
+        if (!res.ok) return;
+        const data = await res.json();
+        
+        document.getElementById('val-requests').innerText = data.total_requests.toLocaleString();
+        document.getElementById('val-tokens').innerText = data.total_tokens.toLocaleString();
+        document.getElementById('val-req-rate').innerText = data.throughput_reqs_per_sec;
+        document.getElementById('val-token-rate').innerText = data.throughput_tokens_per_sec;
+
+        const phases = data.phases;
+        if (phases && phases.total_ms) {
+          document.getElementById('val-p50').innerText = phases.total_ms.p50 + ' ms';
+          
+          const fwd = phases.forward_ms ? phases.forward_ms.p50 : 0;
+          const tok = phases.tokenize_ms ? phases.tokenize_ms.p50 : 0;
+          const prep = phases.prep_ms ? phases.prep_ms.p50 : 0;
+          const score = phases.scoring_ms ? phases.scoring_ms.p50 : 0;
+          const ipc = (phases.read_ms ? phases.read_ms.p50 : 0) + (phases.write_ms ? phases.write_ms.p50 : 0);
+          const total = Math.max(0.1, fwd + tok + prep + score + ipc);
+
+          document.getElementById('seg-forward').style.width = ((fwd / total) * 100) + '%';
+          document.getElementById('seg-tokenize').style.width = ((tok / total) * 100) + '%';
+          document.getElementById('seg-prep').style.width = ((prep / total) * 100) + '%';
+          document.getElementById('seg-scoring').style.width = ((score / total) * 100) + '%';
+          document.getElementById('seg-ipc').style.width = ((ipc / total) * 100) + '%';
+
+          document.getElementById('lbl-forward').innerText = fwd;
+          document.getElementById('lbl-tokenize').innerText = tok;
+          document.getElementById('lbl-prep').innerText = prep;
+          document.getElementById('lbl-scoring').innerText = score;
+          document.getElementById('lbl-ipc').innerText = ipc.toFixed(1);
+
+          let tableHtml = '';
+          const phaseNames = [
+            ['total_ms', 'Total Request'],
+            ['forward_ms', 'PyTorch Model Forward'],
+            ['tokenize_ms', 'Tokenization'],
+            ['prep_ms', 'Tensor Collation'],
+            ['scoring_ms', 'Softmax / Scoring'],
+            ['read_ms', 'IPC Socket Read'],
+            ['write_ms', 'IPC Socket Write']
+          ];
+          for (const [key, label] of phaseNames) {
+            const st = phases[key];
+            if (st) {
+              tableHtml += `<tr>
+                <td><strong>${label}</strong></td>
+                <td>${st.min}</td>
+                <td style="font-weight: 600; color: var(--accent);">${st.p50}</td>
+                <td>${st.p90}</td>
+                <td>${st.p99}</td>
+                <td>${st.max}</td>
+                <td>${st.avg}</td>
+              </tr>`;
+            }
+          }
+          document.getElementById('phases-table-body').innerHTML = tableHtml;
+        }
+
+        if (data.recent_requests && data.recent_requests.length > 0) {
+          let reqHtml = '';
+          for (const r of data.recent_requests.slice().reverse()) {
+            const probColor = r.probability >= 0.65 ? 'var(--red)' : 'var(--green)';
+            reqHtml += `<tr>
+              <td><code>${r.request_id || '-'}</code></td>
+              <td>${r.tokens}</td>
+              <td>${r.forward_ms}ms</td>
+              <td>${r.total_ms}ms</td>
+              <td style="font-weight:600; color:${probColor};">${r.probability}</td>
+            </tr>`;
+          }
+          document.getElementById('recent-requests-body').innerHTML = reqHtml;
+        }
+      } catch (err) {
+        document.getElementById('daemon-status').innerText = 'OFFLINE / DISCONNECTED';
+        document.getElementById('daemon-status').style.color = 'var(--red)';
+      }
+    }
+    setInterval(updateStats, 2000);
+    updateStats();
+  </script>
+</body>
+</html>

@@ -1,0 +1,401 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": true,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "title": "System Overview & Throughput",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "id": 1,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "expr": "latch_daemon_uptime_seconds",
+          "format": "time_series",
+          "instant": true,
+          "legendFormat": "Uptime",
+          "refId": "A"
+        }
+      ],
+      "title": "Daemon Uptime",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 5, "x": 4, "y": 1 },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum(latch_daemon_requests_total)",
+          "format": "time_series",
+          "instant": true,
+          "legendFormat": "Total Requests",
+          "refId": "A"
+        }
+      ],
+      "title": "Total Chunks Evaluated",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 4, "w": 5, "x": 9, "y": 1 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "targets": [
+        {
+          "expr": "latch_daemon_tokens_processed_total",
+          "format": "time_series",
+          "instant": true,
+          "legendFormat": "Tokens Processed",
+          "refId": "A"
+        }
+      ],
+      "title": "Total Tokens Processed",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null },
+              { "color": "green", "value": 5 }
+            ]
+          },
+          "unit": "reqps"
+        }
+      },
+      "gridPos": { "h": 4, "w": 5, "x": 14, "y": 1 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "targets": [
+        {
+          "expr": "latch_daemon_throughput_requests_per_second",
+          "format": "time_series",
+          "instant": false,
+          "legendFormat": "Req/s",
+          "refId": "A"
+        }
+      ],
+      "title": "Throughput (Chunks/sec)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "purple", "value": null },
+              { "color": "green", "value": 2000 }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 4, "w": 5, "x": 19, "y": 1 },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "targets": [
+        {
+          "expr": "latch_daemon_throughput_tokens_per_second",
+          "format": "time_series",
+          "instant": false,
+          "legendFormat": "Tokens/s",
+          "refId": "A"
+        }
+      ],
+      "title": "Throughput (Tokens/sec)",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "id": 101,
+      "title": "Phase-by-Phase Latency Profiling (Where Time is Spent)",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 25,
+            "stacking": { "group": "A", "mode": "normal" }
+          },
+          "unit": "ms"
+        }
+      },
+      "gridPos": { "h": 9, "w": 14, "x": 0, "y": 6 },
+      "id": 6,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "last", "max"] }
+      },
+      "targets": [
+        {
+          "expr": "latch_daemon_phase_duration_milliseconds{phase=\"forward_ms\",stat=\"p50\"}",
+          "legendFormat": "PyTorch Model Forward (p50)",
+          "refId": "A"
+        },
+        {
+          "expr": "latch_daemon_phase_duration_milliseconds{phase=\"tokenize_ms\",stat=\"p50\"}",
+          "legendFormat": "Tokenization (p50)",
+          "refId": "B"
+        },
+        {
+          "expr": "latch_daemon_phase_duration_milliseconds{phase=\"prep_ms\",stat=\"p50\"}",
+          "legendFormat": "Tensor Prep & Collation (p50)",
+          "refId": "C"
+        },
+        {
+          "expr": "latch_daemon_phase_duration_milliseconds{phase=\"scoring_ms\",stat=\"p50\"}",
+          "legendFormat": "Softmax & Scoring (p50)",
+          "refId": "D"
+        },
+        {
+          "expr": "latch_daemon_phase_duration_milliseconds{phase=\"read_ms\",stat=\"p50\"}",
+          "legendFormat": "IPC Socket Read (p50)",
+          "refId": "E"
+        },
+        {
+          "expr": "latch_daemon_phase_duration_milliseconds{phase=\"write_ms\",stat=\"p50\"}",
+          "legendFormat": "IPC Socket Write (p50)",
+          "refId": "F"
+        }
+      ],
+      "title": "Stacked Latency Breakdown by Phase (p50 ms)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "fillOpacity": 10 },
+          "unit": "ms"
+        }
+      },
+      "gridPos": { "h": 9, "w": 10, "x": 14, "y": 6 },
+      "id": 7,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "last", "max"] }
+      },
+      "targets": [
+        {
+          "expr": "latch_daemon_phase_duration_milliseconds{phase=\"total_ms\",stat=\"p50\"}",
+          "legendFormat": "Total p50",
+          "refId": "A"
+        },
+        {
+          "expr": "latch_daemon_phase_duration_milliseconds{phase=\"total_ms\",stat=\"p90\"}",
+          "legendFormat": "Total p90",
+          "refId": "B"
+        },
+        {
+          "expr": "latch_daemon_phase_duration_milliseconds{phase=\"total_ms\",stat=\"p99\"}",
+          "legendFormat": "Total p99",
+          "refId": "C"
+        }
+      ],
+      "title": "Total Request Latency Percentiles (p50, p90, p99)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 },
+      "id": 102,
+      "title": "Hardware Saturation & Cache Performance",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 75 },
+              { "color": "red", "value": 90 }
+            ]
+          },
+          "unit": "percent"
+        }
+      },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 16 },
+      "id": 8,
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        {
+          "expr": "latch_daemon_cpu_percent",
+          "instant": true,
+          "legendFormat": "CPU Saturation",
+          "refId": "A"
+        }
+      ],
+      "title": "CPU Core Saturation",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "fillOpacity": 15 },
+          "unit": "bytes"
+        }
+      },
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 16 },
+      "id": 9,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "targets": [
+        {
+          "expr": "latch_daemon_memory_bytes{type=\"rss\"}",
+          "legendFormat": "Resident Memory (RSS)",
+          "refId": "A"
+        }
+      ],
+      "title": "Daemon Resident Memory (RSS)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "bars", "fillOpacity": 50 },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 16 },
+      "id": 10,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "targets": [
+        {
+          "expr": "rate(latch_daemon_cache_events_total{result=\"hit\"}[1m])",
+          "legendFormat": "Cache Hits/s",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(latch_daemon_cache_events_total{result=\"miss\"}[1m])",
+          "legendFormat": "Cache Misses/s",
+          "refId": "B"
+        }
+      ],
+      "title": "Cache Hit / Miss Rates",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["latch", "ai", "pii-guardrail", "profiler"],
+  "time": { "from": "now-15m", "to": "now" },
+  "timepicker": { "refresh_intervals": ["1s", "5s", "10s", "30s", "1m"] },
+  "timezone": "browser",
+  "title": "Latch Daemon - Neural Guardrail Profiler",
+  "uid": "latch-daemon-profiler",
+  "version": 1
+}

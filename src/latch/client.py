@@ -34,6 +34,37 @@ class Client:
         self.prefer_daemon = prefer_daemon
         self.last_mode: str = "in_process"
         self.last_daemon_error: Optional[str] = None
+        self._http_conn: Optional[http.client.HTTPConnection] = None
+
+    def _get_http_connection(self) -> http.client.HTTPConnection:
+        """Obtain or initialize a persistent HTTP connection to the local daemon."""
+        if self._http_conn is None:
+            import http.client
+            self._http_conn = http.client.HTTPConnection(
+                "127.0.0.1",
+                self.config.daemon_port,
+                timeout=self.config.daemon_eval_timeout_sec,
+            )
+        return self._http_conn
+
+    def _close_http_connection(self) -> None:
+        """Close persistent HTTP connection socket if open."""
+        if self._http_conn is not None:
+            try:
+                self._http_conn.close()
+            except Exception:
+                pass
+            self._http_conn = None
+
+    def close(self) -> None:
+        """Clean up active sockets and connections."""
+        self._close_http_connection()
+
+    def __enter__(self) -> Client:
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.close()
 
     def _get_in_process_engine(self) -> JuliaEngine:
         if self._in_process_engine is None:
@@ -71,6 +102,7 @@ class Client:
             except Exception as err:
                 # Daemon failed mid-request: capture diagnostic and fall back in-process
                 self.last_daemon_error = str(err)
+                self._close_http_connection()
 
         # Cold-start in-process fallback
         self.last_mode = "in_process"
@@ -78,22 +110,32 @@ class Client:
         return engine.evaluate(state, request_id=request_id)
 
     def _evaluate_via_daemon(self, state: str, request_id: str = "") -> EvaluationResult:
-        """Send POST request to daemon IPC endpoint with authentication."""
-        url = f"http://127.0.0.1:{self.config.daemon_port}/v1/evaluate"
+        """Send POST request to daemon IPC endpoint with authentication and connection reuse."""
+        import http.client
         payload = json.dumps({"state": state, "request_id": request_id}).encode("utf-8")
-        headers = {"Content-Type": "application/json"}
-        token = self._get_daemon_token()
+        headers = {
+            "Content-Type": "application/json",
+            "Content-Length": str(len(payload)),
+            "Connection": "keep-alive",
+        }
+        token = self._get_daemon_token()  # latch:ignore
         if token:
-            headers["X-Latch-Token"] = token
+            headers["X-Latch-Token"] = token  # latch:ignore
 
-        req = urllib.request.Request(
-            url,
-            data=payload,
-            headers=headers,
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=self.config.daemon_eval_timeout_sec) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        def _do_request(conn: http.client.HTTPConnection) -> dict:  # latch:ignore
+            conn.request("POST", "/v1/evaluate", body=payload, headers=headers)  # latch:ignore
+            resp = conn.getresponse()  # latch:ignore
+            raw = resp.read()  # latch:ignore
+            return json.loads(raw.decode("utf-8"))  # latch:ignore
+
+        conn = self._get_http_connection()  # latch:ignore
+        try:  # latch:ignore
+            data = _do_request(conn)  # latch:ignore
+        except (http.client.HTTPException, ConnectionResetError, BrokenPipeError, OSError):  # latch:ignore
+            # Stale connection on idle socket: reconnect once and retry
+            self._close_http_connection()  # latch:ignore
+            conn = self._get_http_connection()  # latch:ignore
+            data = _do_request(conn)  # latch:ignore
 
         return EvaluationResult(
             probability=float(data.get("probability", 1.0)),

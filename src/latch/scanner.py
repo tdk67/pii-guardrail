@@ -6,7 +6,9 @@ binary dissection localization engine.
 """
 
 from __future__ import annotations
+import datetime
 import fnmatch
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -59,10 +61,156 @@ class ScanReport:
     mode: str = "in_process"
     exempted_pragma_lines: int = 0
     exempted_allowlist_files: int = 0
+    threshold: float = DEFAULT_PII_THRESHOLD
+    timestamp: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"))
 
     @property
     def is_clean(self) -> bool:
         return len(self.leaks) == 0
+
+    def get_suggested_allowlists(self) -> List[str]:
+        """Analyzes leak locations and generates recommended allowlist paths."""
+        if not self.leaks:
+            return []
+        suggestions: Set[str] = set()
+        dir_counts: Dict[str, int] = {}
+
+        for leak in self.leaks:
+            norm = leak.offending_file.replace("\\", "/").strip("/")
+            parts = norm.split("/")
+            if len(parts) > 1:
+                parent = "/".join(parts[:-1])
+                dir_counts[parent] = dir_counts.get(parent, 0) + 1
+
+            for i, part in enumerate(parts[:-1]):
+                lower = part.lower()
+                if any(kw in lower for kw in ("fixture", "mock", "testdata", "sample")):
+                    subpath = "/".join(parts[: i + 1])
+                    suggestions.add(f"{subpath}/*")
+                    suggestions.add(f"**/{part}/**")
+
+        for parent, count in dir_counts.items():
+            if count >= 2:
+                suggestions.add(f"{parent}/*")
+
+        if not suggestions and dir_counts:
+            for parent in sorted(dir_counts.keys())[:3]:
+                suggestions.add(f"{parent}/*")
+
+        return sorted(suggestions)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert report to serializable dictionary."""
+        return {
+            "target_dir": self.target_dir,
+            "timestamp": self.timestamp,
+            "is_clean": self.is_clean,
+            "status": "CLEAN" if self.is_clean else "BLOCKED",
+            "threshold": self.threshold,
+            "total_files": self.total_files,
+            "total_lines": self.total_lines,
+            "total_chunks": self.total_chunks,
+            "leaks_count": len(self.leaks),
+            "total_latency_ms": self.total_latency_ms,
+            "mode": self.mode,
+            "exempted_pragma_lines": self.exempted_pragma_lines,
+            "exempted_allowlist_files": self.exempted_allowlist_files,
+            "suggested_allowlists": self.get_suggested_allowlists(),
+            "findings": [
+                {
+                    "file": leak.offending_file.replace("\\", "/"),
+                    "start_line": leak.start_line,
+                    "end_line": leak.end_line,
+                    "probability": round(leak.probability, 4),
+                    "threshold": self.threshold,
+                    "snippet": leak.snippet,
+                }
+                for leak in self.leaks
+            ],
+        }
+
+    def to_markdown(self) -> str:
+        """Convert report to comprehensive Markdown document using template."""
+        pkg_root = Path(__file__).resolve().parent.parent.parent
+        template_file = pkg_root / "templates" / "scan_report_template.md"
+
+        template_text = ""
+        if template_file.exists():
+            try:
+                template_text = template_file.read_text(encoding="utf-8")
+            except OSError:
+                template_text = ""
+
+        if self.is_clean:
+            findings_section = "✅ **No sensitive PII or credentials detected across scanned files.**"
+        else:
+            findings_blocks = []
+            for idx, leak in enumerate(self.leaks, start=1):
+                clean_file = leak.offending_file.replace("\\", "/")
+                abs_target = Path(self.target_dir) / clean_file
+                file_link = f"[{clean_file}](file:///{str(abs_target.resolve()).replace(os.sep, '/')}#L{leak.start_line}-L{leak.end_line})"
+                block = [
+                    f"### Finding {idx}: {file_link} (Lines {leak.start_line}–{leak.end_line})",
+                    f"- **Confidence:** `{leak.probability:.2f}` (Threshold: `{self.threshold:.2f}`)",
+                    f"- **Status:** Sensitive leak isolated by binary dissection",
+                    "",
+                    "```",
+                    leak.snippet,
+                    "```",
+                    "",
+                ]
+                findings_blocks.append("\n".join(block))
+            findings_section = "\n".join(findings_blocks)
+
+        suggestions = self.get_suggested_allowlists()
+        suggested_json = "\n".join(f'    "{p}",' for p in suggestions) if suggestions else '    "fixtures/*"'
+
+        if template_text:
+            return template_text.format(
+                target_dir=self.target_dir,
+                timestamp=self.timestamp,
+                status="CLEAN - Passed" if self.is_clean else f"BLOCKED - {len(self.leaks)} Leak(s) Detected",
+                total_files=self.total_files,
+                total_lines=self.total_lines,
+                total_chunks=self.total_chunks,
+                leaks_count=len(self.leaks),
+                exempted_pragma_lines=self.exempted_pragma_lines,
+                exempted_allowlist_files=self.exempted_allowlist_files,
+                total_latency_ms=self.total_latency_ms,
+                latency_sec=self.total_latency_ms / 1000.0,
+                mode=self.mode,
+                findings_section=findings_section,
+                suggested_patterns_json=suggested_json,
+            )
+        else:
+            return f"# Latch Scan Report\n\nTarget: {self.target_dir}\nLeaks: {len(self.leaks)}\n\n{findings_section}"
+
+    def save_reports(self, output_dir_or_file: Optional[str] = None) -> Tuple[Path, Path]:
+        """Persists markdown and json reports to disk."""
+        if output_dir_or_file:
+            target_path = Path(output_dir_or_file).resolve()
+            if target_path.suffix in (".md", ".markdown"):
+                md_path = target_path
+                json_path = target_path.with_suffix(".json")
+            elif target_path.suffix == ".json":
+                json_path = target_path
+                md_path = target_path.with_suffix(".md")
+            else:
+                target_path.mkdir(parents=True, exist_ok=True)
+                md_path = target_path / "scan_report.md"
+                json_path = target_path / "scan_report.json"
+        else:
+            base_dir = Path(self.target_dir) if Path(self.target_dir).is_dir() else Path.cwd()
+            reports_dir = base_dir / ".latch" / "reports"
+            reports_dir.mkdir(parents=True, exist_ok=True)
+            md_path = reports_dir / "scan_report.md"
+            json_path = reports_dir / "scan_report.json"
+
+        md_path.parent.mkdir(parents=True, exist_ok=True)
+        md_path.write_text(self.to_markdown(), encoding="utf-8")
+        json_path.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
+
+        return md_path, json_path
 
 
 class Scanner:
@@ -75,12 +223,25 @@ class Scanner:
         diff_parser: Optional[DiffParser] = None,
         dissector: Optional[Dissector] = None,
         state_builder: Optional[StateBuilder] = None,
+        allowlist_paths: Optional[Sequence[str]] = None,
+        ignored_dirs: Optional[Sequence[str]] = None,
     ) -> None:
         self.config = config or get_config()
         self.client = client or Client(self.config)
+
+        combined_allowlists = list(self.config.allowlist_paths or [])
+        if allowlist_paths:
+            combined_allowlists.extend(allowlist_paths)
+        self.allowlist_paths = combined_allowlists
+
+        combined_ignored = set(DEFAULT_IGNORED_DIRS)
+        if ignored_dirs:
+            combined_ignored.update(ignored_dirs)
+        self.ignored_dirs = combined_ignored
+
         self.diff_parser = diff_parser or DiffParser(
             max_chunk_tokens=self.config.max_chunk_tokens,
-            allowlist_paths=self.config.allowlist_paths,
+            allowlist_paths=self.allowlist_paths,
         )
         self.dissector = dissector or Dissector(
             threshold=self.config.pii_threshold,
@@ -91,16 +252,36 @@ class Scanner:
 
     def _is_path_allowlisted(self, rel_path: str) -> bool:
         """Check if relative path matches any configured allowlist pattern."""
-        norm_path = rel_path.replace("\\", "/")
-        for pattern in self.config.allowlist_paths:
-            clean_pat = pattern.replace("\\", "/")
+        norm_path = rel_path.replace("\\", "/").strip("/")
+        path_parts = norm_path.split("/")
+
+        for pattern in self.allowlist_paths:
+            clean_pat = pattern.replace("\\", "/").strip("/")
+            if not clean_pat:
+                continue
+
+            # Case 1: Direct glob match
+            if fnmatch.fnmatch(norm_path, clean_pat):
+                return True
+
+            # Case 2: Match with leading wildcard (e.g. "fixtures/*" matches "tests/fixtures/foo.html")
+            if fnmatch.fnmatch(norm_path, f"*/{clean_pat}") or fnmatch.fnmatch(norm_path, f"**/{clean_pat}"):
+                return True
+
+            # Case 3: Pattern has no slashes (e.g. "fixtures" or "*.min.js")
             if "/" not in clean_pat:
-                if fnmatch.fnmatch(norm_path.split("/")[-1], clean_pat):
+                if fnmatch.fnmatch(path_parts[-1], clean_pat):
+                    return True
+                if any(fnmatch.fnmatch(part, clean_pat) for part in path_parts[:-1]):
                     return True
             else:
-                if fnmatch.fnmatch(norm_path, clean_pat):
+                # Case 4: Directory prefix or subpath
+                clean_dir = clean_pat.rstrip("/*")
+                if clean_dir in norm_path or fnmatch.fnmatch(norm_path, f"{clean_dir}/*") or fnmatch.fnmatch(norm_path, f"*/{clean_dir}/*"):
                     return True
+
         return False
+
 
     def collect_source_files(
         self,
@@ -155,6 +336,8 @@ class Scanner:
         threshold: Optional[float] = None,
         max_chunk_tokens: Optional[int] = None,
         progress_callback: Optional[Callable[[int, int], None]] = None,
+        allowlist_paths: Optional[Sequence[str]] = None,
+        ignored_dirs: Optional[Sequence[str]] = None,
     ) -> ScanReport:
         """Executes full scan of target directory and returns ScanReport."""
         root_path = Path(target_dir).resolve()
@@ -165,7 +348,15 @@ class Scanner:
         active_chunk_tokens = max_chunk_tokens if max_chunk_tokens is not None else self.config.max_chunk_tokens
 
         active_exts = set(e.lower() for e in extensions) if extensions else set(DEFAULT_SCAN_EXTENSIONS)
-        active_ignored = set(DEFAULT_IGNORED_DIRS)
+        
+        active_ignored = set(self.ignored_dirs)
+        if ignored_dirs:
+            active_ignored.update(ignored_dirs)
+
+        if allowlist_paths:
+            for p in allowlist_paths:
+                if p not in self.allowlist_paths:
+                    self.allowlist_paths.append(p)
 
         # Collect source files
         source_files, allowlisted_files = self.collect_source_files(
@@ -217,7 +408,7 @@ class Scanner:
         # Batch lines
         custom_parser = DiffParser(
             max_chunk_tokens=active_chunk_tokens,
-            allowlist_paths=self.config.allowlist_paths,
+            allowlist_paths=self.allowlist_paths,
         )
         batches = custom_parser.pack_into_batches(all_lines)
 
@@ -261,4 +452,6 @@ class Scanner:
             mode=last_mode,
             exempted_pragma_lines=pragma_exemptions,
             exempted_allowlist_files=allowlisted_files,
+            threshold=active_threshold,
         )
+

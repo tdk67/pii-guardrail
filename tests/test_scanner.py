@@ -205,3 +205,87 @@ def test_run_scan_cli_exit_codes(tmp_path: Path):
 
     exit_code_leak = run_scan(path=str(tmp_path), scanner=mock_scanner)  # latch:ignore
     assert exit_code_leak == 1  # latch:ignore
+
+
+def test_scan_report_save_and_markdown(tmp_path: Path):
+    report = ScanReport(
+        target_dir=str(tmp_path),
+        total_files=5,
+        total_lines=120,
+        total_chunks=3,
+        leaks=[  # latch:ignore
+            DissectionResult(
+                offending_file="tests/fixtures/data.json",
+                start_line=10,
+                end_line=12,
+                snippet=" 10 | 'token': 'abc_secret_123'",  # latch:ignore
+                probability=0.99,  # latch:ignore
+            )
+        ],
+        total_latency_ms=150,
+        mode="daemon",
+        threshold=0.65,
+    )
+
+    md_path, json_path = report.save_reports(str(tmp_path / "custom_report.md"))
+    assert md_path.exists()
+    assert json_path.exists()
+
+    md_content = md_path.read_text(encoding="utf-8")
+    assert "Latch Codebase Scan Report" in md_content
+    assert "tests/fixtures/data.json" in md_content
+    assert "0.99" in md_content
+
+    import json
+    data = json.loads(json_path.read_text(encoding="utf-8"))
+    assert data["is_clean"] is False
+    assert data["leaks_count"] == 1
+    assert "tests/fixtures/*" in data["suggested_allowlists"]
+
+
+def test_scan_report_whitelist_suggestions():
+    report = ScanReport(
+        target_dir=".",
+        total_files=10,
+        total_lines=1000,
+        total_chunks=10,
+        leaks=[  # latch:ignore
+            DissectionResult(
+                offending_file="tests/fixtures/lupusalpha/form.html",
+                start_line=2019,
+                end_line=2019,
+                snippet="<option>test</option>",
+                probability=1.0,  # latch:ignore
+            ),
+            DissectionResult(
+                offending_file="tests/mocks/mock_auth.py",
+                start_line=15,
+                end_line=15,
+                snippet="password = 'test'",
+                probability=0.85,  # latch:ignore
+            ),
+        ],
+    )
+
+    suggestions = report.get_suggested_allowlists()
+    assert any("fixtures" in s for s in suggestions)
+    assert any("mocks" in s for s in suggestions)
+
+
+def test_scanner_allowlist_patterns(tmp_path: Path):
+    scanner = Scanner(
+        config=LatchConfig(),
+        allowlist_paths=["fixtures/*", "**/mock/**", "secret_template.py"],
+    )
+
+    # Directly under fixtures
+    assert scanner._is_path_allowlisted("fixtures/sample.py") is True
+    # In nested directory under fixtures
+    assert scanner._is_path_allowlisted("tests/fixtures/lupusalpha/form.html") is True
+    # Mock pattern
+    assert scanner._is_path_allowlisted("src/mock/service.py") is True
+    # Exact filename match
+    assert scanner._is_path_allowlisted("dir/secret_template.py") is True
+    # Non-allowlisted file
+    assert scanner._is_path_allowlisted("src/main.py") is False
+

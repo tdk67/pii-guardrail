@@ -21,10 +21,11 @@ class MockEngine:
 
 
 @pytest.fixture
-def test_server():
+def test_server(tmp_path):
+    token_file = str(tmp_path / "daemon.token")
     cfg = LatchConfig(daemon_port=5149)  # Use distinct test port
     mock_engine = MockEngine()
-    server = DaemonServer(cfg, engine=mock_engine)
+    server = DaemonServer(cfg, engine=mock_engine, token_file=token_file)
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
     
@@ -43,6 +44,32 @@ def test_daemon_health_endpoint(test_server):
         data = json.loads(resp.read().decode("utf-8"))
     assert data["status"] == "ready"
     assert "Julia-1" in data["model"]
+
+
+def test_daemon_metrics_and_stats_endpoints(test_server):
+    cfg, _, server = test_server
+    # 1. Prometheus /metrics
+    metrics_url = f"http://127.0.0.1:{cfg.daemon_port}/metrics"
+    req_m = urllib.request.Request(metrics_url, method="GET")
+    with urllib.request.urlopen(req_m, timeout=1.0) as resp:
+        text = resp.read().decode("utf-8")
+    assert "latch_daemon_uptime_seconds" in text
+    assert "latch_daemon_requests_total" in text
+
+    # 2. JSON /v1/stats
+    stats_url = f"http://127.0.0.1:{cfg.daemon_port}/v1/stats"
+    req_s = urllib.request.Request(stats_url, method="GET")
+    with urllib.request.urlopen(req_s, timeout=1.0) as resp:
+        stats = json.loads(resp.read().decode("utf-8"))
+    assert "uptime_seconds" in stats
+    assert "total_requests" in stats
+
+    # 3. HTML /dashboard
+    dash_url = f"http://127.0.0.1:{cfg.daemon_port}/dashboard"
+    req_d = urllib.request.Request(dash_url, method="GET")
+    with urllib.request.urlopen(req_d, timeout=1.0) as resp:
+        html = resp.read().decode("utf-8")
+    assert "<title>Latch Daemon" in html
 
 
 def test_daemon_evaluate_endpoint(test_server):
