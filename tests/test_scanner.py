@@ -51,6 +51,55 @@ def test_collect_source_files_filters_ignored_dirs(tmp_path: Path):
     assert allowlisted == 0
 
 
+def test_collect_source_files_ignores_lockfiles_and_minified(tmp_path: Path):
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "index.js").write_text("console.log('hi');", encoding="utf-8")
+    (src_dir / "bundle.min.js").write_text("console.log('min');", encoding="utf-8")
+    (src_dir / "style.min.css").write_text("body{margin:0}", encoding="utf-8")
+    (src_dir / "package-lock.json").write_text('{"name": "test"}', encoding="utf-8")
+    (src_dir / "yarn.lock").write_text("# yarn lock", encoding="utf-8")
+
+    scanner = Scanner(config=LatchConfig())
+    matched, _ = scanner.collect_source_files(
+        target_dir=tmp_path,
+        extensions={".js", ".css", ".json"},
+        ignored_dirs=set(DEFAULT_IGNORED_DIRS),
+    )
+
+    names = [p.name for p in matched]
+    assert "index.js" in names
+    assert "bundle.min.js" not in names
+    assert "style.min.css" not in names
+    assert "package-lock.json" not in names
+    assert "yarn.lock" not in names
+
+
+def test_scanner_handles_giant_single_line_without_overflow(tmp_path: Path):
+    # Giant 50,000 char line file (e.g. minified json or bundled code)
+    giant_file = tmp_path / "big_data.json"
+    giant_file.write_text('{"data": "' + ("A" * 50000) + '"}', encoding="utf-8")
+
+    received_batches = []
+    mock_client = MagicMock()
+
+    def mock_eval(prompt, request_id=""):
+        received_batches.append(prompt)
+        return EvaluationResult(probability=0.01, latency_ms=5)
+
+    mock_client.evaluate.side_effect = mock_eval
+    mock_client.last_mode = "in_process"
+
+    scanner = Scanner(config=LatchConfig(max_chunk_tokens=750), client=mock_client)
+    report = scanner.scan(target_dir=str(tmp_path), extensions=[".json"])
+
+    assert report.is_clean is True
+    assert report.total_chunks > 1
+    # Check that each evaluated prompt never exceeds the model context window
+    for prompt in received_batches:
+        assert len(prompt) < 15000  # Well within safe context budget (< 8192 tokens)
+
+
 def test_scanner_clean_directory(tmp_path: Path):
     (tmp_path / "main.py").write_text("def run():\n    return 42\n", encoding="utf-8")
     (tmp_path / "config.json").write_text('{"env": "prod"}', encoding="utf-8")

@@ -260,8 +260,35 @@ class DiffParser:
         batches: List[DiffBatch] = []
         current_lines: List[AddedLine] = []
         current_tokens = 0
+        max_line_chars = max(100, (self.max_chunk_tokens - 10) * 4)
 
         for line in lines:
+            # If a single line exceeds max_line_chars (e.g. minified JS, giant JSON, lockfiles),
+            # split it into chunk-sized line slices to prevent context budget overflows.
+            if len(line.content) > max_line_chars:
+                for start in range(0, len(line.content), max_line_chars):
+                    chunk_text = line.content[start : start + max_line_chars]
+                    sub_line = AddedLine(
+                        file_path=line.file_path,
+                        line_number=line.line_number,
+                        content=chunk_text,
+                    )
+                    sub_tokens = estimate_line_tokens(chunk_text)
+                    if current_lines and (current_tokens + sub_tokens > self.max_chunk_tokens):
+                        batches.append(
+                            DiffBatch(
+                                batch_id=str(uuid.uuid4()),
+                                lines=current_lines,
+                                estimated_tokens=current_tokens,
+                            )
+                        )
+                        current_lines = [sub_line]
+                        current_tokens = sub_tokens
+                    else:
+                        current_lines.append(sub_line)
+                        current_tokens += sub_tokens
+                continue
+
             line_tokens = estimate_line_tokens(line.content)
 
             if current_lines and (current_tokens + line_tokens > self.max_chunk_tokens):

@@ -180,3 +180,17 @@ def test_diff_parser_tracks_exemption_stats():
     assert parser.last_stats.total_exempted == 3
 
 
+def test_pack_into_batches_chunks_oversized_single_line():
+    """A giant single line (e.g. 50,000 chars minified JS/JSON) must be chunked so no batch overflows."""
+    parser = DiffParser(max_chunk_tokens=750)
+    giant_content = "var a = 1; " * 5000  # ~55,000 characters
+    line = AddedLine(file_path="src/bundle.js", line_number=1, content=giant_content)
+
+    batches = parser.pack_into_batches([line])
+    assert len(batches) > 1
+    for b in batches:
+        # Every batch must strictly respect the token bound
+        assert b.estimated_tokens <= 750
+        assert all(l.file_path == "src/bundle.js" for l in b.lines)
+
+

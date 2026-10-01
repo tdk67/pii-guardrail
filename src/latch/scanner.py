@@ -27,7 +27,13 @@ DEFAULT_SCAN_EXTENSIONS: FrozenSet[str] = frozenset({
 DEFAULT_IGNORED_DIRS: FrozenSet[str] = frozenset({
     ".git", ".venv", "venv", "env", "node_modules", "__pycache__",
     ".pytest_cache", ".latch", "dist", "build", ".egg-info",
-    ".idea", ".vscode", "models",
+    ".idea", ".vscode", "models", ".next", ".nuxt", "out",
+    "coverage", ".turbo", ".cache", ".parcel-cache",
+})
+
+DEFAULT_IGNORED_FILES: FrozenSet[str] = frozenset({
+    "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Pipfile.lock",
+    "poetry.lock", "composer.lock", "Cargo.lock",
 })
 
 
@@ -101,10 +107,12 @@ class Scanner:
         target_dir: Path,
         extensions: Set[str],
         ignored_dirs: Set[str],
+        ignored_files: Optional[Set[str]] = None,
     ) -> Tuple[List[Path], int]:
         """Walks directory and yields non-ignored, text source files."""
         matched_files: List[Path] = []
         allowlisted_count = 0
+        active_ignored_files = ignored_files if ignored_files is not None else set(DEFAULT_IGNORED_FILES)
 
         for root, dirs, files in os.walk(target_dir):
             # In-place prune of ignored directory names
@@ -116,6 +124,13 @@ class Scanner:
                 continue
 
             for fname in files:
+                # Skip dependency lockfiles and generated minified bundles
+                lower_name = fname.lower()
+                if fname in active_ignored_files:
+                    continue
+                if lower_name.endswith(".min.js") or lower_name.endswith(".min.css") or lower_name.endswith(".map"):
+                    continue
+
                 ext = os.path.splitext(fname)[1].lower()
                 if not ext and fname.startswith("."):
                     ext = fname.lower()
@@ -163,6 +178,8 @@ class Scanner:
         total_source_lines = 0
         pragma_exemptions = 0
 
+        max_line_chars = max(100, (active_chunk_tokens - 10) * 4)
+
         for fpath in source_files:
             try:
                 content = fpath.read_text(encoding="utf-8", errors="replace")
@@ -177,13 +194,25 @@ class Scanner:
                 if LATCH_IGNORE_PRAGMA in line_content:
                     pragma_exemptions += 1
                     continue
-                all_lines.append(
-                    AddedLine(
-                        file_path=rel_path,
-                        line_number=i,
-                        content=line_content,
+
+                if len(line_content) > max_line_chars:
+                    for start in range(0, len(line_content), max_line_chars):
+                        chunk_text = line_content[start : start + max_line_chars]
+                        all_lines.append(
+                            AddedLine(
+                                file_path=rel_path,
+                                line_number=i,
+                                content=chunk_text,
+                            )
+                        )
+                else:
+                    all_lines.append(
+                        AddedLine(
+                            file_path=rel_path,
+                            line_number=i,
+                            content=line_content,
+                        )
                     )
-                )
 
         # Batch lines
         custom_parser = DiffParser(
