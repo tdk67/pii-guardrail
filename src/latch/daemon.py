@@ -1,6 +1,6 @@
 """Local HTTP IPC daemon for Latch.
  
-Keeps Julia-1 loaded warm in RAM to deliver fast warm git pre-commit evaluations (~1-2s vs cold start).
+Keeps Julia-1 loaded warm in RAM to avoid repeated cold-start model initialization.
 Uses standard library http.server.ThreadingHTTPServer to avoid external dependencies.
 Bound strictly to 127.0.0.1 for zero-trust local execution.
 """

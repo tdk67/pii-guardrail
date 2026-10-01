@@ -1,7 +1,7 @@
 """Fast client and two-tier fallback orchestrator for Latch.
 
-Coordinates evaluation between the warm background daemon (<15ms IPC overhead)
-and in-process evaluation (cold-start fallback).
+Coordinates evaluation between the warm background daemon and in-process
+cold-start fallback.
 """
 
 from __future__ import annotations

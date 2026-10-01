@@ -125,11 +125,11 @@ python -m latch.cli scan . --report ./reports/audit.md
 - **Persistent Audit Reports**: Automatically generates `.latch/reports/scan_report.md` (Markdown with clickable file/line links, snippets, and summary tables) and `scan_report.json`.
 - **Intelligent Whitelist Suggestions**: When leaks are detected in test fixtures or mock directories, Latch analyzes the paths and displays actionable configuration snippets to add to `config.json`.
 - **Adaptive Dissection**: Localizes findings down to the exact file and line range using binary search.
-- **Warm Daemon Acceleration**: Avoids the 10–15s PyTorch cold start, running warm forward passes in ~1–2s on CPU.
+- **Warm Daemon Acceleration**: Keeps model weights resident in RAM, eliminating cold-start initialization overhead on subsequent commits.
 
-### Run Background Daemon for Fast Warm Inference
+### Run Background Daemon for Warm Inference
 
-Start the local background daemon to keep Julia-1 pre-warmed in memory. This avoids reloading PyTorch weights on every commit and brings evaluation latency down from ~15s cold-start to ~1–2 seconds:
+Start the local background daemon to keep Julia-1 pre-warmed in memory, avoiding model reload overhead on every commit:
 
 ```bash
 # Start daemon in background (Windows PowerShell)
@@ -321,9 +321,9 @@ To guarantee that a git commit never gets stuck waiting forever on a dead, unres
 - **Dissection Engine (`src/latch/dissection.py`)**: Divide-and-conquer binary search that recursively bisects multi-file staged diffs down to the exact offending file and $\le 25$-line context window.
 - **Conservative Split Fallback**: Handles edge-case PII spanning split boundaries by conservatively evaluating the full candidate block if both halves test clean.
 
-### Slice 3: Sub-Second Warm IPC Daemon & Two-Tier Fallback
+### Slice 3: Warm IPC Daemon & Two-Tier Fallback
 - **Daemon (`src/latch/daemon.py`)**: Background `ThreadingHTTPServer` bound to `127.0.0.1:5138` with `/v1/health`, `/v1/evaluate`, and `/v1/shutdown`. Pre-warms weights and runs a warm-up inference on startup.
-- **Client (`src/latch/client.py`)**: 50ms fast HTTP probe; seamlessly routes to warm daemon for fast warm commits (~1–2s per evaluation on standard CPU vs ~15s cold-start, with loopback IPC taking <15ms; see `docs/BENCHMARK_REPORT.md`), with automatic fallback to in-process cold-start if the daemon is offline or times out.
+- **Client (`src/latch/client.py`)**: 50ms fast HTTP probe; seamlessly routes to warm daemon for accelerated evaluations without model reload overhead (see `docs/BENCHMARK_REPORT.md`), with automatic fallback to in-process cold-start if the daemon is offline or times out.
 - **Lifecycle Scripts (`scripts/windows/`)**: `start-daemon.ps1`, `stop-daemon.ps1`, `status-daemon.ps1`.
 
 ### Slice 4: One-Touch Git Hook Installation & Strict Fail-Closed Safeguard
