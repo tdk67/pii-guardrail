@@ -105,7 +105,7 @@ python -m latch.cli check
 Audit an entire project or directory tree rather than just staged git changes:
 
 ```bash
-# Scan current repository or project directory
+# Scan current repository or project directory (automatically respects .gitignore)
 python -m latch.cli scan .
 
 # Scan specific directory with custom extensions and threshold
@@ -114,15 +114,22 @@ python -m latch.cli scan ./src --ext .py,.ts,.json --threshold 0.70
 # Customize batch chunk size (default: 750 tokens)
 python -m latch.cli scan ./backend --max-chunk-tokens 1000
 
-# Exempt specific directories or wildcards at runtime
-python -m latch.cli scan . --ignore-dir fixtures --allowlist "tests/fixtures/*"
+# Exempt multiple directories (comma-separated or multiple flags)
+python -m latch.cli scan . --ignore-dir fixtures,CoverLetters,tests/reports
+
+# Allowlist specific test fixture paths
+python -m latch.cli scan . --allowlist "tests/fixtures/*"
+
+# Disable .gitignore filtering if you want to inspect uncommitted assets:
+python -m latch.cli scan . --no-gitignore
 
 # Export report to a custom file
 python -m latch.cli scan . --report ./reports/audit.md
 ```
 
-- **Automatic Noise Pruning**: Silently skips `.git`, `.venv`, `node_modules`, `__pycache__`, `models/julia-1`, and binary files.
-- **Persistent Audit Reports**: Automatically generates `.latch/reports/scan_report.md` (Markdown with clickable file/line links, snippets, and summary tables) and `scan_report.json`.
+- **Automatic `.gitignore` Filtering**: Automatically discovers and parses `.gitignore` in the target directory or parent git root, skipping non-version-controlled files, temporary build outputs, and local documents.
+- **Automatic Noise Pruning**: Silently skips default build/cache directories (`.git`, `.venv`, `node_modules`, `__pycache__`, `models/julia-1`, etc.) and binary files.
+- **Persistent Audit Reports**: Automatically generates `.latch/reports/scan_report.md` (Markdown with clickable file/line links, snippets, Gitignore File Exemptions, and Ignored Directories) and `scan_report.json`.
 - **Intelligent Whitelist Suggestions**: When leaks are detected in test fixtures or mock directories, Latch analyzes the paths and displays actionable configuration snippets to add to `config.json`.
 - **Adaptive Dissection**: Localizes findings down to the exact file and line range using binary search.
 - **Warm Daemon Acceleration**: Keeps model weights resident in RAM, eliminating cold-start initialization overhead on subsequent commits.
@@ -244,14 +251,19 @@ To set up visual monitoring with Prometheus and Grafana:
    ```
 
 2. Start Prometheus:
-   - **Using Docker**:
+   - **Using Docker (Linux / VPS)**:
+     ```bash
+     docker run -d --name prometheus --network host -v $(pwd)/prometheus.yml:/etc/prometheus/prometheus.yml prom/prometheus
+     ```
+   - **Using Docker (WSL2 / Docker Desktop)**:
+     Use `host.docker.internal:5138` in your `prometheus.yml` targets, then run:
      ```bash
      docker run -d --name prometheus -p 9090:9090 -v ${PWD}/prometheus.yml:/etc/prometheus/prometheus.yml prom/prometheus
      ```
-   - **Standalone Binary**:
-     Download from [prometheus.io/download](https://prometheus.io/download/) and run:
+   - **Standalone Binary (Zero Docker, Windows native)**:
+     Download from [prometheus.io/download](https://prometheus.io/download/) and run directly:
      ```bash
-     ./prometheus --config.file=prometheus.yml
+     ./prometheus.exe --config.file=prometheus.yml
      ```
 
 3. Open `http://localhost:9090/targets` to verify Prometheus is scraping `http://127.0.0.1:5138/metrics` with status **UP**.
@@ -446,7 +458,7 @@ Latch provides two flexible mechanisms to handle deliberate public disclosures (
 
 ## All Build Slices Completed & Verified
 
-All 5 core architectural slices defined in the technical specification and PRD are implemented, covered by 62 automated unit tests, and verified end-to-end with the live Julia-1 model:
+All 5 core architectural slices defined in the technical specification and PRD are implemented, covered by 88 automated unit tests, and verified end-to-end with the live Julia-1 model:
 - **FNR (False Negative Rate)**: **0.0%** (zero missed leaks across all credentials and personal records)
 - **Prompt Injection Resilience**: **100.0%** (all adversarial injection attempts successfully blocked)
 - **Accuracy**: **93.8%** across 16 adversarial, PII, and clean algorithm fixtures
