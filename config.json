@@ -15,7 +15,8 @@
   "noul_criteria_path": "./fixtures/noul_criteria.json",
   "benchmark_fixtures_dir": "./fixtures/",
   "allowlist_paths": [
-    "fixtures/*"
+    "fixtures/*",
+    "tests/*"
   ],
   "chunk_overlap_lines": 2,
   "chunk_overlap_chars": 64
