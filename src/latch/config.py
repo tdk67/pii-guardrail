@@ -42,6 +42,8 @@ class LatchConfig:
     benchmark_fixtures_dir: str = "./fixtures/"
     allowlist_paths: List[str] = field(default_factory=list)
     ignored_dirs: List[str] = field(default_factory=list)
+    chunk_overlap_lines: int = 2
+    chunk_overlap_chars: int = 64
 
     def __post_init__(self) -> None:
         """Resolve paths relative to package root if running outside project CWD."""

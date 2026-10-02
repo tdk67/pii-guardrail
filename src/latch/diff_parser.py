@@ -86,10 +86,14 @@ class DiffParser:
         max_chunk_tokens: int = 750,
         context_lines: int = 3,
         allowlist_paths: Optional[Sequence[str]] = None,
+        overlap_lines: int = 2,
+        overlap_chars: int = 64,
     ) -> None:
         self.max_chunk_tokens = max_chunk_tokens
         self.context_lines = context_lines
         self.allowlist_paths = list(allowlist_paths or [])
+        self.overlap_lines = max(0, overlap_lines)
+        self.overlap_chars = max(0, overlap_chars)
         self.last_stats: ParserStats = ParserStats()
 
     @staticmethod
@@ -236,8 +240,40 @@ class DiffParser:
 
         return added_lines
 
+    def _get_overlap_lines(
+        self,
+        current_lines: Sequence[AddedLine],
+        target_file_path: str,
+        incoming_tokens: int,
+    ) -> List[AddedLine]:
+        """Extract trailing lines from the same file for context overlap, bounded by token budget."""
+        if self.overlap_lines <= 0 or not current_lines:
+            return []
+
+        # Only carry over lines from the exact same file to preserve syntactical context
+        candidates: List[AddedLine] = []
+        for line in reversed(current_lines):
+            if line.file_path != target_file_path:
+                break
+            candidates.append(line)
+            if len(candidates) >= self.overlap_lines:
+                break
+
+        candidates.reverse()
+        if not candidates:
+            return []
+
+        # Ensure candidates + incoming line do not exceed max_chunk_tokens
+        while candidates:
+            cand_tokens = sum(estimate_line_tokens(c.content) for c in candidates)
+            if cand_tokens + incoming_tokens <= self.max_chunk_tokens:
+                return candidates
+            candidates.pop(0)
+
+        return []
+
     def pack_into_batches(self, lines: Sequence[AddedLine]) -> List[DiffBatch]:
-        """Packs AddedLine items into DiffBatch objects up to max_chunk_tokens."""
+        """Packs AddedLine items into DiffBatch objects up to max_chunk_tokens with sliding overlap."""
         if not lines:
             return []
 
@@ -248,9 +284,14 @@ class DiffParser:
 
         for line in lines:
             # If a single line exceeds max_line_chars (e.g. minified JS, giant JSON, lockfiles),
-            # split it into chunk-sized line slices to prevent context budget overflows.
+            # split it into chunk-sized line slices with character overlap.
             if len(line.content) > max_line_chars:
-                for start in range(0, len(line.content), max_line_chars):
+                step = (
+                    max(1, max_line_chars - self.overlap_chars)
+                    if self.overlap_chars > 0 and max_line_chars > self.overlap_chars
+                    else max_line_chars
+                )
+                for start in range(0, len(line.content), step):
                     chunk_text = line.content[start : start + max_line_chars]
                     sub_line = AddedLine(
                         file_path=line.file_path,
@@ -266,8 +307,11 @@ class DiffParser:
                                 estimated_tokens=current_tokens,
                             )
                         )
-                        current_lines = [sub_line]
-                        current_tokens = sub_tokens
+                        overlap_cands = self._get_overlap_lines(
+                            current_lines, sub_line.file_path, sub_tokens
+                        )
+                        current_lines = list(overlap_cands) + [sub_line]
+                        current_tokens = sum(estimate_line_tokens(l.content) for l in current_lines)
                     else:
                         current_lines.append(sub_line)
                         current_tokens += sub_tokens
@@ -283,8 +327,11 @@ class DiffParser:
                         estimated_tokens=current_tokens,
                     )
                 )
-                current_lines = [line]
-                current_tokens = line_tokens
+                overlap_cands = self._get_overlap_lines(
+                    current_lines, line.file_path, line_tokens
+                )
+                current_lines = list(overlap_cands) + [line]
+                current_tokens = sum(estimate_line_tokens(l.content) for l in current_lines)
             else:
                 current_lines.append(line)
                 current_tokens += line_tokens

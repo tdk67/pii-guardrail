@@ -1,4 +1,4 @@
-from latch.diff_parser import DiffParser, AddedLine
+from latch.diff_parser import DiffParser, AddedLine, compute_max_line_chars
 
 
 SAMPLE_DIFF = """diff --git a/src/user.py b/src/user.py
@@ -213,5 +213,58 @@ def test_pack_into_batches_chunks_oversized_single_line():
         # Every batch must strictly respect the token bound
         assert b.estimated_tokens <= 750
         assert all(l.file_path == "src/bundle.js" for l in b.lines)
+
+
+def test_pack_into_batches_sliding_window_overlap():
+    """Verifies that consecutive batches from the same file share trailing overlap lines."""
+    # Each line ~ 10 tokens; max_chunk_tokens = 30 means ~3 lines per batch
+    lines = [
+        AddedLine(file_path="src/metrics.py", line_number=i, content=f"metric_counter_{i} = 100 + {i}")
+        for i in range(1, 10)
+    ]
+    parser = DiffParser(max_chunk_tokens=30, overlap_lines=2)
+    batches = parser.pack_into_batches(lines)
+
+    assert len(batches) > 1
+    # Check that batch 2 starts with the last 2 lines of batch 1
+    batch_1_lines = [l.line_number for l in batches[0].lines]
+    batch_2_lines = [l.line_number for l in batches[1].lines]
+    overlap = set(batch_1_lines).intersection(set(batch_2_lines))
+    assert len(overlap) == 2
+    assert sorted(list(overlap)) == batch_1_lines[-2:]
+
+
+def test_pack_into_batches_overlap_respects_file_boundaries():
+    """Overlap lines should not cross across different files."""
+    lines = [
+        AddedLine(file_path="src/file_a.py", line_number=1, content="a = 'long string content value 1'"),
+        AddedLine(file_path="src/file_a.py", line_number=2, content="b = 'long string content value 2'"),
+        AddedLine(file_path="src/file_b.py", line_number=1, content="c = 'long string content value 3'"),
+    ]
+    parser = DiffParser(max_chunk_tokens=15, overlap_lines=2)
+    batches = parser.pack_into_batches(lines)
+
+    # Batch containing file_b should not inherit lines from file_a
+    file_b_batches = [b for b in batches if any(l.file_path == "src/file_b.py" for l in b.lines)]
+    for b in file_b_batches:
+        assert all(l.file_path == "src/file_b.py" for l in b.lines)
+
+
+def test_pack_into_batches_oversized_line_character_overlap():
+    """Oversized line chunks should overlap characters so secrets on cut boundaries are preserved."""
+    parser = DiffParser(max_chunk_tokens=50, overlap_chars=20)
+    max_line_chars = compute_max_line_chars(50)  # 150 chars
+    # Create text where secret sits exactly across index 150
+    head = "A" * (max_line_chars - 10)
+    secret = "SECRET_TOKEN_12345"  # latch:ignore
+    tail = "B" * 100
+    long_line = AddedLine(file_path="min.js", line_number=1, content=head + secret + tail)
+
+    batches = parser.pack_into_batches([long_line])
+    all_chunks_text = [b.lines[0].content for b in batches if b.lines]
+    # Because of overlap_chars=20, secret must appear complete in either chunk 1 or chunk 2
+    secret_found = any(secret in text for text in all_chunks_text)
+    assert secret_found, "Secret spanning character slice boundary must be preserved via overlap!"
+
 
 

@@ -357,6 +357,8 @@ class Scanner:
         self.diff_parser = diff_parser or DiffParser(
             max_chunk_tokens=self.config.max_chunk_tokens,
             allowlist_paths=self.allowlist_paths,
+            overlap_lines=self.config.chunk_overlap_lines,
+            overlap_chars=self.config.chunk_overlap_chars,
         )
         self.dissector = dissector or Dissector(
             threshold=self.config.pii_threshold,
@@ -529,6 +531,8 @@ class Scanner:
         custom_parser = DiffParser(
             max_chunk_tokens=active_chunk_tokens,
             allowlist_paths=self.allowlist_paths,
+            overlap_lines=self.config.chunk_overlap_lines,
+            overlap_chars=self.config.chunk_overlap_chars,
         )
         batches = custom_parser.pack_into_batches(all_lines)
 
@@ -561,7 +565,15 @@ class Scanner:
                     initial_probability=eval_result.probability,
                 )
                 if localized.probability >= active_threshold:
-                    leaks.append(localized)  # latch:ignore
+                    # Deduplicate against already recorded leaks (e.g. from overlap)
+                    is_duplicate = any(
+                        l.offending_file == localized.offending_file
+                        and l.start_line == localized.start_line
+                        and l.end_line == localized.end_line
+                        for l in leaks
+                    )
+                    if not is_duplicate:
+                        leaks.append(localized)  # latch:ignore
 
         return ScanReport(
             target_dir=str(root_path),

@@ -33,6 +33,8 @@ def run_check(
     pars = parser or DiffParser(
         max_chunk_tokens=cfg.max_chunk_tokens,
         allowlist_paths=cfg.allowlist_paths,
+        overlap_lines=cfg.chunk_overlap_lines,
+        overlap_chars=cfg.chunk_overlap_chars,
     )
 
     try:
