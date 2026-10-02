@@ -318,8 +318,10 @@ class DiffParser:
                 continue
 
             line_tokens = estimate_line_tokens(line.content)
+            file_changed = current_lines and (current_lines[-1].file_path != line.file_path)
+            tokens_exceeded = current_lines and (current_tokens + line_tokens > self.max_chunk_tokens)
 
-            if current_lines and (current_tokens + line_tokens > self.max_chunk_tokens):
+            if file_changed or tokens_exceeded:
                 batches.append(
                     DiffBatch(
                         batch_id=str(uuid.uuid4()),
@@ -327,10 +329,13 @@ class DiffParser:
                         estimated_tokens=current_tokens,
                     )
                 )
-                overlap_cands = self._get_overlap_lines(
-                    current_lines, line.file_path, line_tokens
-                )
-                current_lines = list(overlap_cands) + [line]
+                if not file_changed:
+                    overlap_cands = self._get_overlap_lines(
+                        current_lines, line.file_path, line_tokens
+                    )
+                    current_lines = list(overlap_cands) + [line]
+                else:
+                    current_lines = [line]
                 current_tokens = sum(estimate_line_tokens(l.content) for l in current_lines)
             else:
                 current_lines.append(line)
