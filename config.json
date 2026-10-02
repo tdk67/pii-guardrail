@@ -16,7 +16,8 @@
   "benchmark_fixtures_dir": "./fixtures/",
   "allowlist_paths": [
     "fixtures/*",
-    "tests/*"
+    "tests/*",
+    "scripts/demo/*"
   ],
   "chunk_overlap_lines": 2,
   "chunk_overlap_chars": 64
