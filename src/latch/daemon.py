@@ -156,7 +156,7 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
                 self._send_error_500(err)
             return
 
-        if req_path == "/v1/health":
+        if req_path in ("/v1/health", "/health"):
             try:
                 is_auth = self._validate_token()
                 challenge_resp = None
@@ -474,8 +474,10 @@ class DaemonManager:
         )
         self.save_pid(proc.pid)
 
-        # Wait up to 30s for the daemon to cold-load weights and become ready
-        for _ in range(60):
+        # Wait up to 60s for the daemon to cold-load weights and become ready
+        startup_timeout = int(os.environ.get("LATCH_DAEMON_STARTUP_TIMEOUT", "60"))
+        max_attempts = max(1, int(startup_timeout / 0.5))
+        for _ in range(max_attempts):
             time.sleep(0.5)
             if self.is_running():
                 token = self.get_token() or ""
@@ -485,7 +487,7 @@ class DaemonManager:
                 print(f"[INFO] Observability Dashboard: {dash_url} (Full token stored in .latch/daemon.token)")
                 return True
 
-        print("[ERROR] Daemon started but failed health check within 30 seconds.", file=sys.stderr)
+        print(f"[ERROR] Daemon started but failed health check within {startup_timeout} seconds.", file=sys.stderr)
         return False
 
     def stop(self) -> bool:

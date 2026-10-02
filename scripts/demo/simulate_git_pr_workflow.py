@@ -26,6 +26,8 @@ import argparse
 from pathlib import Path
 import shutil
 import subprocess
+import sys
+import tempfile
 
 BASE_BRANCH = "demo-test-base"
 FEATURE_BRANCH = "demo-test-feature"
@@ -364,7 +366,7 @@ def remediate_pii() -> None:
     print("  -> Staged remediated code in git.")
 
 
-def cleanup_branches(original_branch: str) -> None:
+def cleanup_branches(original_branch: str, prune_all_objects: bool = False) -> None:
     print(f"\n[CLEANUP] Restoring working tree to original branch '{original_branch}'...")
     run_cmd(["git", "merge", "--abort"], check=False, capture=True)
     run_cmd(["git", "reset", "--hard", "HEAD"], check=False, capture=True)
@@ -375,23 +377,31 @@ def cleanup_branches(original_branch: str) -> None:
         shutil.rmtree(SERVICES_DIR, ignore_errors=True)
     if TESTS_FILE.exists():
         TESTS_FILE.unlink(missing_ok=True)
-    # Prune unreachable objects created during temporary branch simulation
-    run_cmd(["git", "reflog", "expire", "--expire=now", "--all"], check=False, capture=True)
-    run_cmd(["git", "gc", "--prune=now"], check=False, capture=True)
-    print("[OK] Cleanup complete. Working directory is clean and unreachable demo objects pruned.")
+    
+    if prune_all_objects:
+        # In isolated/sandbox environments, aggressive pruning of demo objects is safe
+        run_cmd(["git", "reflog", "expire", "--expire=now", "--all"], check=False, capture=True)
+        run_cmd(["git", "gc", "--prune=now"], check=False, capture=True)
+        print("[OK] Cleanup complete. Working directory is clean and unreachable demo objects pruned.")
+    else:
+        print("[OK] Cleanup complete. Working directory restored to original branch.")
 
 
 def verify_hook_installed() -> None:
     hook_file = Path(".git/hooks/pre-commit")
     if not hook_file.exists() or "Latch" not in hook_file.read_text(encoding="utf-8", errors="ignore"):
         print("[WARN] Latch pre-commit hook not detected. Installing hook...")
-        import sys
-        run_cmd([sys.executable, "-m", "latch.cli", "install"])
+        res = run_cmd([sys.executable, "-m", "latch.cli", "install"], check=False, capture=True)
+        if res.returncode != 0:
+            print(f"[ERROR] Failed to auto-install Latch hook: {res.stderr.strip()}", file=sys.stderr)
+            print("        Please ensure latch is installed or run: python -m latch.cli install", file=sys.stderr)
+            sys.exit(1)
+        print("[OK] Latch pre-commit hook successfully installed.")
     else:
         print("[OK] Latch pre-commit hook is verified and active.")
 
 
-def run_full_simulation() -> None:
+def run_full_simulation(prune_objects: bool = False) -> None:
     verify_hook_installed()
     orig_branch = get_current_branch()
     print(f"[DEMO START] Current active branch: {orig_branch}")
@@ -430,16 +440,54 @@ def run_full_simulation() -> None:
 
     finally:
         # 5. Always clean up test branches
-        cleanup_branches(orig_branch)
+        cleanup_branches(orig_branch, prune_all_objects=prune_objects)
+
+
+def run_sandbox_simulation() -> None:
+    """Run the entire PR workflow in an isolated temporary clone.
+    
+    Protects the host repository: no branch switching, no reflog expiration,
+    and no git gc on the host repo. The disposable sandbox is pruned and deleted.
+    """
+    sandbox_dir = Path(tempfile.mkdtemp(prefix="latch-sim-sandbox-"))
+    print(f"[SANDBOX] Creating isolated disposable clone at:\n          {sandbox_dir}")
+    try:
+        # Clone current repository to isolate git object store and branches
+        run_cmd(["git", "clone", ".", str(sandbox_dir)], check=True, capture=True)
+        
+        # Link or copy .latch state (daemon token/config) so daemon IPC connects
+        host_latch = Path(".latch")
+        if host_latch.exists():
+            sandbox_latch = sandbox_dir / ".latch"
+            shutil.copytree(host_latch, sandbox_latch)
+
+        # Run in-place simulation inside the sandbox directory
+        script_path = Path(__file__).resolve()
+        res = subprocess.run(
+            [sys.executable, str(script_path), "--in-place", "--prune-all"],
+            cwd=str(sandbox_dir),
+            check=False,
+        )
+        if res.returncode != 0:
+            sys.exit(res.returncode)
+    finally:
+        print("\n[SANDBOX] Disposing isolated sandbox clone...")
+        shutil.rmtree(sandbox_dir, ignore_errors=True)
+        print("[OK] Sandbox removed cleanly. Host repository objects and reflogs were completely untouched.")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Simulate realistic git branch merge development scenario")
     parser.add_argument("--cleanup-only", action="store_true", help="Only cleanup temporary demo branches")
+    parser.add_argument("--in-place", action="store_true", help="Run directly in the current workspace instead of an isolated clone")
+    parser.add_argument("--prune-all", action="store_true", help="Force prune all unreachable objects and expire reflogs")
     args = parser.parse_args()
 
     orig = get_current_branch()
     if args.cleanup_only:
-        cleanup_branches("main" if orig.startswith("demo-") else orig)
+        cleanup_branches("main" if orig.startswith("demo-") else orig, prune_all_objects=args.prune_all)
+    elif args.in_place:
+        run_full_simulation(prune_objects=args.prune_all)
     else:
-        run_full_simulation()
+        # Default: run in safe isolated sandbox clone to protect host repo
+        run_sandbox_simulation()

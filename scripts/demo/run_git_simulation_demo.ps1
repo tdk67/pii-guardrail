@@ -24,7 +24,7 @@ if (-not (Test-Path $hookPath) -or -not (Select-String -Path $hookPath -Pattern 
 
 # Pre-flight Check: Daemon Health
 try {
-    $probe = Invoke-RestMethod -Uri "http://127.0.0.1:5138/health" -Method Get -TimeoutSec 2
+    $probe = Invoke-RestMethod -Uri "http://127.0.0.1:5138/v1/health" -Method Get -TimeoutSec 2
     Write-Host "[OK] Latch daemon is active on 127.0.0.1:5138" -ForegroundColor Green
 } catch {
     Write-Host "[WARN] Latch daemon not running. Starting in background..." -ForegroundColor Yellow

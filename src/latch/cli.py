@@ -6,7 +6,9 @@ daemon management, and evaluation benchmarks.
 
 from __future__ import annotations
 import argparse
+import json
 import os
+from pathlib import Path
 import sys
 from typing import Any, List, Optional, Sequence
 from latch.client import Client
@@ -191,6 +193,33 @@ def run_install(repo_root: Optional[str] = None, presenter: Optional[Presenter] 
         print("[OK] Latch pre-commit hook successfully installed at:")
         print(f"     {hook_path}")
         print(f"     Executable interpreter: {sys.executable}")
+
+        # Ensure a local starter configuration exists so third-party repos do not inherit package defaults
+        target_dir = Path(repo_root) if repo_root else Path(hook_path).parents[2]
+        local_cfg = target_dir / "config.json"
+        latch_cfg = target_dir / ".latch" / "config.json"
+        if not local_cfg.exists() and not latch_cfg.exists():
+            (target_dir / ".latch").mkdir(parents=True, exist_ok=True)
+            starter_config = {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "config_version": "1.0",
+                "model": "SupersonicLabs/Julia-1",
+                "model_path": "./models/julia-1",
+                "model_max_context_tokens": 8192,
+                "pii_threshold": 0.65,
+                "max_chunk_tokens": 750,
+                "max_dissection_depth": 15,
+                "localization_window_lines": 25,
+                "daemon_port": 5138,
+                "daemon_probe_timeout_ms": 50,
+                "daemon_eval_timeout_sec": 10.0,
+                "allowlist_paths": [],
+                "chunk_overlap_lines": 2,
+                "chunk_overlap_chars": 64
+            }
+            latch_cfg.write_text(json.dumps(starter_config, indent=2), encoding="utf-8")
+            print(f"     Neutral starter config created at: {latch_cfg}")
+
         return 0
     except HookInstallError as err:
         err_msg = pres.format_error(

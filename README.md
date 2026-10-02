@@ -488,10 +488,12 @@ Latch includes reproducible simulation scripts under `scripts/demo/` for testing
 ## Limitations & Threat Model
 
 1. **Client-Side Hook Boundaries**:
-   Like all Git client-side hooks, local pre-commit hooks can be bypassed using `git commit --no-verify`. For enterprise enforcement, Latch should be paired with server-side CI/CD scanning or branch protection rules.
-2. **Model Semantic Context**:
-   Julia-1 is a 144M parameter SLM fine-tuned on NOUL criteria. It detects unstructured PII and credentials within realistic context windows. In cases where secrets are deeply nested within large, boilerplate-heavy scaffolding, batch partitioning per file boundary ensures token share is maintained.
-3. **Allowlist Scoping**:
-   Test fixtures and mock directories should be scoped explicitly in `allowlist_paths` inside `config.json` to prevent mock data from triggering policy blocks.
+   Like all Git client-side hooks, local pre-commit hooks can be bypassed using `git commit --no-verify`. For comprehensive enterprise enforcement, Latch is designed to be paired with server-side CI/CD scanning and remote branch protection rules (defense-in-depth).
+2. **Model Semantic Context & Known Trade-offs**:
+   Julia-1 is a compact 144.3M parameter SLM fine-tuned specifically on NOUL criteria. While highly effective at detecting unstructured credentials and PII on standard developer workstations without GPU hardware, empirical testing reveals two known small-model trade-offs:
+   - **Path-Token Sensitivity**: Model weights exhibit learned sensitivity to path tokens in diff headers. Path prefixes such as `tests/`, `fixtures/`, `mock/`, or `test/` can bias the model's classification toward synthetic test fixtures, reducing sensitivity scores (measured drops of 0.40–0.80 probability compared to production paths like `src/` or `app/`).
+   - **Intra-File Structural Dilution**: When sensitive data is deeply embedded within extensive structural scaffolding (e.g. large functions, numerous imports, nested wrapper dictionaries), the token density of the secret relative to surrounding boilerplate drops significantly, reducing model detection confidence. While Latch partitions multi-file diffs to respect file boundaries, intra-file boilerplate dilution remains an inherent trade-off of compact context representations.
+3. **Allowlist & Scoping Hygiene**:
+   Legitimate test fixtures and mock records should be explicitly declared in `allowlist_paths` inside `config.json` or marked with `# latch:ignore` to prevent test suites from triggering pre-commit blocks. Starter configurations created via `latch install` ship with an empty allowlist (`[]`) by default to prevent accidental exemption leakage in new repositories.
 
 

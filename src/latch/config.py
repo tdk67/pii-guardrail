@@ -120,6 +120,10 @@ def resolve_config_path(explicit_path: Optional[str] = None) -> Path:
     if cwd_config.exists():
         return cwd_config
 
+    latch_dir_config = Path.cwd() / ".latch" / "config.json"
+    if latch_dir_config.exists():
+        return latch_dir_config
+
     home_config = Path.home() / ".latch" / "config.json"
     if home_config.exists():
         return home_config
@@ -155,6 +159,14 @@ class ConfigManager:
         filtered: Dict[str, Any] = {
             k: v for k, v in data.items() if not k.startswith("$")
         }
+
+        # If falling back to PACKAGE_ROOT from outside the Latch development repository,
+        # ensure allowlist_paths is neutral ([]) to prevent leaking demo/test allowlists.
+        if (
+            Path(self.config_path).resolve() == (PACKAGE_ROOT / "config.json").resolve()
+            and Path.cwd().resolve() != PACKAGE_ROOT.resolve()
+        ):
+            filtered["allowlist_paths"] = []
 
         valid_fields: Set[str] = {f.name for f in fields(LatchConfig)}
         unknown_keys = set(filtered.keys()) - valid_fields

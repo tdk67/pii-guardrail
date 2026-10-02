@@ -1,6 +1,6 @@
 """Demo Scenario: Inject realistic customer PII and secret credentials.
 
-Creates demo/customer_export.py with unredacted PII (name, address, email,
+Creates demo/customer_export.py with unredacted PII (name, email,
 phone, and live payment secret) and stages it in git for pre-commit block demonstration.
 """
 
@@ -31,7 +31,7 @@ def get_payment_auth():
 '''
     target_file.write_text(code, encoding="utf-8")
     print(f"[DEMO] Created file with PII: {target_file}")
-    print("  -> Injected Name, Email, Phone, Physical Address, and Live Secret Key.")
+    print("  -> Injected Name, Email, Phone, and Live Secret Key.")
 
     res = subprocess.run(["git", "add", str(target_file)], capture_output=True, text=True)
     if res.returncode == 0:
