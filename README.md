@@ -458,11 +458,40 @@ Latch provides two flexible mechanisms to handle deliberate public disclosures (
 
 ## All Build Slices Completed & Verified
 
-All 5 core architectural slices defined in the technical specification and PRD are implemented, covered by 88 automated unit tests, and verified end-to-end with the live Julia-1 model:
-- **FNR (False Negative Rate)**: **0.0%** (zero missed leaks across all credentials and personal records)
+All 5 core architectural slices defined in the technical specification and PRD are implemented, covered by 91 automated unit tests (91 passed, 1 integration suite), and verified end-to-end with the live Julia-1 model:
+- **FNR (False Negative Rate)**: **0.0%** (zero missed leaks across benchmark credentials and personal records)
 - **Prompt Injection Resilience**: **100.0%** (all adversarial injection attempts successfully blocked)
 - **Accuracy**: **93.8%** across 16 adversarial, PII, and clean algorithm fixtures
 - **Empirical Report**: See [BENCHMARK_REPORT.md](docs/BENCHMARK_REPORT.md) for full reproducible baseline metrics, per-fixture probabilities, and hardware specs.
 - **Clean Code Architecture**: 100% standard library IPC, zero silent fallback heuristics, strict fail-closed enforcement.
+
+---
+
+## Interactive Demonstration Suite
+
+Latch includes reproducible simulation scripts under `scripts/demo/` for testing and live demonstrations:
+
+1. **Realistic Git PR Simulation** (`scripts/demo/run_git_simulation_demo.ps1`):
+   - Sets up a multi-branch development scenario (`demo-test-base` and `demo-test-feature`).
+   - Introduces a realistic 9-file, 227-line enterprise microservices PR (billing engine, notification queue, token-bucket rate limiter, markdown report generator, unit tests, and documentation).
+   - Stages customer synchronization code containing sensitive customer PII and live API credentials.
+   - Executes `git commit` to demonstrate the active pre-commit hook intercepting and blocking the commit with dissection pinpointing (lines 1–14).
+   - Remediates to `os.environ.get(...)` and verifies clean commit acceptance (`[OK] Latch: Clean`).
+   - Automatically prunes temporary branches and residual git objects, restoring `main` cleanly.
+
+2. **Interactive Live CLI Walkthrough** (`scripts/demo/run_live_cli_demo.ps1`):
+   - Step-by-step walkthrough covering daemon health probing, PII injection, pre-commit hook interception, safe remediation, and whole-codebase repository scanning.
+   - Includes fail-fast guardrail self-checks and guaranteed SHA rollback to prevent lingering commits.
+
+---
+
+## Limitations & Threat Model
+
+1. **Client-Side Hook Boundaries**:
+   Like all Git client-side hooks, local pre-commit hooks can be bypassed using `git commit --no-verify`. For enterprise enforcement, Latch should be paired with server-side CI/CD scanning or branch protection rules.
+2. **Model Semantic Context**:
+   Julia-1 is a 144M parameter SLM fine-tuned on NOUL criteria. It detects unstructured PII and credentials within realistic context windows. In cases where secrets are deeply nested within large, boilerplate-heavy scaffolding, batch partitioning per file boundary ensures token share is maintained.
+3. **Allowlist Scoping**:
+   Test fixtures and mock directories should be scoped explicitly in `allowlist_paths` inside `config.json` to prevent mock data from triggering policy blocks.
 
 

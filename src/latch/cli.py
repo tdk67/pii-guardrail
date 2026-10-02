@@ -8,7 +8,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from typing import Any, Optional, Sequence
+from typing import Any, List, Optional, Sequence
 from latch.client import Client
 from latch.config import ConfigError, LatchConfig, get_config
 from latch.daemon import DaemonManager

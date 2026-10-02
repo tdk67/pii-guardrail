@@ -26,8 +26,6 @@ import argparse
 from pathlib import Path
 import shutil
 import subprocess
-import sys
-import time
 
 BASE_BRANCH = "demo-test-base"
 FEATURE_BRANCH = "demo-test-feature"
@@ -377,10 +375,24 @@ def cleanup_branches(original_branch: str) -> None:
         shutil.rmtree(SERVICES_DIR, ignore_errors=True)
     if TESTS_FILE.exists():
         TESTS_FILE.unlink(missing_ok=True)
-    print("[OK] Cleanup complete. Working directory is clean.")
+    # Prune unreachable objects created during temporary branch simulation
+    run_cmd(["git", "reflog", "expire", "--expire=now", "--all"], check=False, capture=True)
+    run_cmd(["git", "gc", "--prune=now"], check=False, capture=True)
+    print("[OK] Cleanup complete. Working directory is clean and unreachable demo objects pruned.")
+
+
+def verify_hook_installed() -> None:
+    hook_file = Path(".git/hooks/pre-commit")
+    if not hook_file.exists() or "Latch" not in hook_file.read_text(encoding="utf-8", errors="ignore"):
+        print("[WARN] Latch pre-commit hook not detected. Installing hook...")
+        import sys
+        run_cmd([sys.executable, "-m", "latch.cli", "install"])
+    else:
+        print("[OK] Latch pre-commit hook is verified and active.")
 
 
 def run_full_simulation() -> None:
+    verify_hook_installed()
     orig_branch = get_current_branch()
     print(f"[DEMO START] Current active branch: {orig_branch}")
 

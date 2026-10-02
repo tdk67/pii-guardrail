@@ -149,7 +149,8 @@ class GitignoreParser:
         """Evaluates whether an individual path string matches rules."""
         ignored = False
         for rule in self.rules:
-            if not abs_str.startswith(rule.base_dir):
+            # Check path boundary to avoid matching sibling prefixes (e.g. /tmp/foo matching /tmp/foobar)
+            if abs_str != rule.base_dir and not abs_str.startswith(rule.base_dir + "/"):
                 continue
 
             rel = abs_str[len(rule.base_dir):].lstrip("/")

@@ -441,9 +441,10 @@ class DaemonManager:
         """Start daemon in detached background process."""
         if self.is_running():
             token = self.get_token() or ""
-            dash_url = f"http://127.0.0.1:{self.config.daemon_port}/dashboard?token={token}" if token else f"http://127.0.0.1:{self.config.daemon_port}/dashboard"
+            masked_token = f"{token[:6]}...{token[-4:]}" if token and len(token) > 12 else ("***" if token else "")
+            dash_url = f"http://127.0.0.1:{self.config.daemon_port}/dashboard" + (f"?token={masked_token}" if masked_token else "")
             print(f"[OK] Latch daemon is already running on port {self.config.daemon_port}.")
-            print(f"[INFO] Observability Dashboard: {dash_url}")
+            print(f"[INFO] Observability Dashboard: {dash_url} (Full token stored in .latch/daemon.token)")
             return True
 
         print(f"Starting Latch daemon on 127.0.0.1:{self.config.daemon_port}...")
@@ -478,9 +479,10 @@ class DaemonManager:
             time.sleep(0.5)
             if self.is_running():
                 token = self.get_token() or ""
-                dash_url = f"http://127.0.0.1:{self.config.daemon_port}/dashboard?token={token}" if token else f"http://127.0.0.1:{self.config.daemon_port}/dashboard"
+                masked_token = f"{token[:6]}...{token[-4:]}" if token and len(token) > 12 else ("***" if token else "")
+                dash_url = f"http://127.0.0.1:{self.config.daemon_port}/dashboard" + (f"?token={masked_token}" if masked_token else "")
                 print(f"[OK] Latch daemon warm and ready on port {self.config.daemon_port} (PID: {proc.pid}).")
-                print(f"[INFO] Observability Dashboard: {dash_url}")
+                print(f"[INFO] Observability Dashboard: {dash_url} (Full token stored in .latch/daemon.token)")
                 return True
 
         print("[ERROR] Daemon started but failed health check within 30 seconds.", file=sys.stderr)
@@ -540,9 +542,10 @@ class DaemonManager:
         if self.is_running():
             pid = self.get_pid()
             token = self.get_token() or ""
-            dash_url = f"http://127.0.0.1:{self.config.daemon_port}/dashboard?token={token}" if token else f"http://127.0.0.1:{self.config.daemon_port}/dashboard"
+            masked_token = f"{token[:6]}...{token[-4:]}" if token and len(token) > 12 else ("***" if token else "")
+            dash_url = f"http://127.0.0.1:{self.config.daemon_port}/dashboard" + (f"?token={masked_token}" if masked_token else "")
             print(f"[OK] Latch daemon: RUNNING on 127.0.0.1:{self.config.daemon_port} (PID: {pid or 'active'})")
-            print(f"[INFO] Observability Dashboard: {dash_url}")
+            print(f"[INFO] Observability Dashboard: {dash_url} (Full token stored in .latch/daemon.token)")
         else:
             port_open = False
             try:

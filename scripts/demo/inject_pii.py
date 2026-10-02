@@ -16,30 +16,18 @@ def inject_pii() -> None:
     target_file = demo_dir / "customer_export.py"
     code = '''"""Customer data export job handler."""
 
-import os
-import json
+def get_user_contact():
+    # Production customer contact details
+    customer_name = "Jane Doe"
+    customer_phone = "+1-415-829-3011"
+    customer_email = "jane.doe@private-records.org"
+    return {"name": customer_name, "phone": customer_phone, "email": customer_email}
 
 
-def get_payment_gateway_config():
-    # SENSITIVE: Accidentally hardcoded production credentials & VIP customer test record
-    STRIPE_LIVE_SECRET = "sk-live-51Mz9Q8AbCdEfGhIjKlMnOpQrStUvWxYz998877"
-    VIP_CONTACT_NAME = "Dr. Alexander Neumann"
-    VIP_CONTACT_EMAIL = "alexander.neumann@munich-tech.de"
-    VIP_PHONE_NUMBER = "+49 89 289 01"
-    VIP_BILLING_ADDRESS = "Boltzmannstrasse 15, 85748 Garching, Germany"
-
-    return {
-        "gateway_key": STRIPE_LIVE_SECRET,
-        "primary_contact": VIP_CONTACT_NAME,
-        "email": VIP_CONTACT_EMAIL,
-        "phone": VIP_PHONE_NUMBER,
-        "address": VIP_BILLING_ADDRESS,
-    }
-
-
-def export_customer_record(customer_id: str) -> dict:
-    cfg = get_payment_gateway_config()
-    return {"status": "ready", "account": customer_id, "gateway": cfg["gateway_key"]}
+def get_payment_auth():
+    # Leaked live payment token
+    auth_token = "sk-live-99283819284729104"
+    return auth_token
 '''
     target_file.write_text(code, encoding="utf-8")
     print(f"[DEMO] Created file with PII: {target_file}")

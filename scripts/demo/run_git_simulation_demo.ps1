@@ -2,9 +2,9 @@
 .SYNOPSIS
     Realistic Git Branch & Merge Simulation Runner for Latch.
 .DESCRIPTION
-    Creates temporary base and feature branches from real git history (88d16a9 -> 8df97dd),
-    merges them to produce a realistic 12-file, 464-line multi-chunk diff, injects PII,
-    demonstrates the pre-commit block, remediates, commits cleanly, and deletes the test branches.
+    Creates temporary base and feature branches, merges a 9-file enterprise microservices
+    PR with unit tests and customer synchronization PII, demonstrates the pre-commit block,
+    remediates, commits cleanly, and deletes the test branches.
 #>
 
 $ErrorActionPreference = "Stop"
@@ -13,7 +13,16 @@ Write-Host "====================================================================
 Write-Host " [DEMO] Running Realistic Git Branch Merge Simulation" -ForegroundColor Cyan
 Write-Host "================================================================================" -ForegroundColor Cyan
 
-# Check daemon health first
+# Pre-flight Check: Hook Installation
+$hookPath = ".git/hooks/pre-commit"
+if (-not (Test-Path $hookPath) -or -not (Select-String -Path $hookPath -Pattern "Latch" -SimpleMatch -Quiet)) {
+    Write-Host "[WARN] Latch pre-commit hook not detected. Installing hook..." -ForegroundColor Yellow
+    .\.venv\Scripts\python -m latch.cli install
+} else {
+    Write-Host "[OK] Latch pre-commit hook is verified and active." -ForegroundColor Green
+}
+
+# Pre-flight Check: Daemon Health
 try {
     $probe = Invoke-RestMethod -Uri "http://127.0.0.1:5138/health" -Method Get -TimeoutSec 2
     Write-Host "[OK] Latch daemon is active on 127.0.0.1:5138" -ForegroundColor Green
